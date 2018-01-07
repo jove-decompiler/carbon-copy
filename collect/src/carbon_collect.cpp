@@ -78,6 +78,16 @@ public:
     return true;
   }
 
+  bool VisitOffsetOfExpr(OffsetOfExpr *e) {
+    if (debugMode)
+      llvm::errs() << "  OffsetOfExpr\n";
+
+    needsType(clang_source_range(e->getSourceRange()),
+              e->getTypeSourceInfo()->getType().getTypePtrOrNull());
+
+    return true;
+  }
+
   bool VisitCStyleCastExpr(CStyleCastExpr *e) {
     if (debugMode)
       llvm::errs() << "  CStyleCastExpr\n";
