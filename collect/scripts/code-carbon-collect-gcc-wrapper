@@ -1,0 +1,74 @@
+#!/bin/bash
+SCRIPTDIR=$(dirname "$(readlink -f "$0")")
+CARBONCOLLECTSO=$SCRIPTDIR/../bin/carbon-collect.so
+CC=$SCRIPTDIR/../../../libs/llvm/bin/clang
+
+#
+# define __extern_always_inline because of a bug in glibc which results
+# in compiler errors when using clang:
+#
+# https://sourceware.org/bugzilla/show_bug.cgi?id=14952
+#
+# pass -no-integrated-as to clang because of trouble dealing with inline
+# assembly. see freebsd thread on the error encountered:
+#
+# https://lists.freebsd.org/pipermail/freebsd-ports/2012-September/077996.html
+#
+
+#
+# XXX: code-carbon root directory *must* be installed at ${HOME}/code-carbon.
+# This hack was necessary to support the ultimate hack of altering the
+# system-wide /usr/bin/gcc, while still supporting multiple users using
+# code-carbon on the same machine
+#
+
+#
+# check if the working directory is under ~/code-carbon/examples/apps/bin/s
+# if so, execute clang.
+#
+python -c "import sys; import os.path; p=os.path.relpath(\"${PWD}\", \"${HOME}/code-carbon/examples/apps/bin/s\"); sys.exit(0 if p == \".\" or p[:2] != \"..\" else 1)"
+if [ $? -eq 0 ]
+then
+
+  #
+  # special exceptions XXX
+  # the following source files do not compile with -O0
+  #
+  if [[ $@ == *"gradfun.c"* ]] || [[ $@ == *"vf_halfpack.c"* ]] || [[ $@ == *"vf_ilpack.c"* ]] || [[ $@ == *"dct64"* ]]
+  then
+  exec ${CC} "$@" \
+    -O2 -g \
+    -no-integrated-as \
+    -D__extern_always_inline=inline \
+    -Xclang -load \
+    -Xclang "$CARBONCOLLECTSO" \
+    -Xclang -add-plugin \
+    -Xclang carbon-collect \
+    -Xclang -plugin-arg-carbon-collect -Xclang "$PWD"
+  fi
+
+  exec ${CC} "$@" \
+    -O0 -g \
+    -no-integrated-as \
+    -D__extern_always_inline=inline \
+    -Xclang -load \
+    -Xclang "$CARBONCOLLECTSO" \
+    -Xclang -add-plugin \
+    -Xclang carbon-collect \
+    -Xclang -plugin-arg-carbon-collect -Xclang "$PWD"
+fi
+
+#
+# fallback to gcc-4.7
+#
+
+#
+# special exceptions XXX
+# the following source files do not compile with -O0
+#
+if [[ $@ == *"gradfun.c"* ]] || [[ $@ == *"vf_halfpack.c"* ]] || [[ $@ == *"vf_ilpack.c"* ]] || [[ $@ == *"dct64"* ]]
+then
+  exec /usr/bin/gcc-4.7 "$@" '-O2' '-g'
+fi
+
+exec /usr/bin/gcc-4.7 "$@" '-O0' '-g'

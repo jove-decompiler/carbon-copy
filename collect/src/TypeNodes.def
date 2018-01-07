@@ -1,0 +1,12 @@
+TYPE(Pointer)
+TYPE(FunctionProto)
+TYPE(Record)
+TYPE(Enum)
+TYPE(ConstantArray)
+TYPE(IncompleteArray)
+TYPE(VariableArray)
+TYPE(Elaborated)
+TYPE(Paren)
+TYPE(Typedef)
+
+#undef TYPE
