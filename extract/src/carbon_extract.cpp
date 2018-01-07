@@ -198,6 +198,7 @@ tuple<fs::path, collection_sources_t, code_location_list_t,
       global_symbol_list_t, int, bool, bool, bool, bool>
 parse_command_line_arguments(int argc, char **argv) {
   fs::path root_src_dir;
+  fs::path root_bin_dir;
   vector<string> code_args;
   vector<string> from_args;
   bool from_all;
@@ -220,8 +221,11 @@ parse_command_line_arguments(int argc, char **argv) {
       ("out,o", po::value<fs::path>(&ofp),
        "specify output file path")
 
-      ("dir,d", po::value<fs::path>(&root_src_dir)->default_value(fs::current_path()),
+      ("src", po::value<fs::path>(&root_src_dir)->default_value(fs::current_path()),
        "specify root source directory where code exists")
+
+      ("bin", po::value<fs::path>(&root_bin_dir)->default_value(fs::current_path()),
+       "specify root build directory where carbon files exist")
 
       ("verbose,v", po::value<int>(&verb)->default_value(0),
        "enable verbosity (optionally specify level)")
@@ -273,7 +277,7 @@ parse_command_line_arguments(int argc, char **argv) {
 
   root_src_dir = fs::canonical(root_src_dir);
 
-  fs::path carbon_dir(root_src_dir / ".carbon");
+  fs::path carbon_dir(root_bin_dir / ".carbon");
   if (!fs::is_directory(carbon_dir)) {
     cerr << "carbon data not found in " << root_src_dir << endl;
     exit(1);

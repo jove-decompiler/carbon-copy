@@ -474,23 +474,44 @@ public:
 
   bool ParseArgs(const CompilerInstance &CI,
                  const vector<string> &args) override {
+    SourceManager &SM = CI.getSourceManager();
+    const StringRef& src = SM.getFileEntryForID(SM.getMainFileID())->getName();
+
     //
-    // we only process C code.
+    // we only process C code
     //
     {
       const LangOptions &LO = CI.getLangOpts();
-      bool is_c = LO.C99 || LO.C11;
-      if (!is_c)
+      bool is_c = !LO.CPlusPlus && !LO.CPlusPlus11 && !LO.CPlusPlus14 &&
+                  !LO.CPlusPlus1z && !LO.CPlusPlus2a && !LO.ObjC1 && !LO.ObjC2;
+      if (!is_c) {
+        llvm::outs() << "collect: skipping " << src << '\n';
         return false;
+      }
     }
 
-    // XXX
-    gl_SM = &CI.getSourceManager();
+    //
+    // parse arguments
+    //
+    fs::path root_src_dir(args[0]);
+    fs::path root_bin_dir(args[1]);
 
-    SourceManager &SM = CI.getSourceManager();
-    c.set_args(path_of_clang_source_file(clang_source_file(SM.getMainFileID())),
-               args.empty() ? fs::current_path() : fs::path(args.front()));
+    if (args.size() != 2 ||
+        !fs::is_directory(root_src_dir) ||
+        !fs::is_directory(root_bin_dir)) {
+      llvm::errs() << "Usage: "
+        "-load carbon-collect.so "
+        "-add-plugin carbon-collect "
+        "-plugin-arg-carbon-collect root_source_directory "
+        "-plugin-arg-carbon-collect root_build_directory\n";
+      return false;
+    }
 
+    c.set_args(fs::canonical(fs::path(src.str())),
+               fs::canonical(root_src_dir),
+               fs::canonical(root_bin_dir));
+
+    gl_SM = &CI.getSourceManager(); /* XXX */
     return true;
   }
 };

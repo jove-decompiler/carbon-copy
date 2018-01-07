@@ -612,10 +612,11 @@ collector::collector() : priv(new collector_priv()) {}
 
 collector::~collector() {}
 
-void collector::set_args(const fs::path &_srcfp,
-                         const fs::path &_root_src_dir) {
+void collector::set_args(const fs::path &_srcfp, const fs::path &_root_src_dir,
+                         const fs::path &_root_bin_dir) {
   srcfp = _srcfp;
   root_src_dir = _root_src_dir;
+  root_bin_dir = _root_bin_dir;
 }
 
 void collector::set_invocation_macros(
@@ -730,36 +731,18 @@ void collector::follow_users_of(const clang_source_range_t &prior,
 void collector::write_carbon_output() {
   priv->fixup_static_functions();
 
-  // we may not be in the root source directory
-  if (!fs::is_directory(root_src_dir / ".carbon")) {
-    // search upwards until we hit the root directory for a directory containing
-    // a '.carbon' one. otherwise, we create the directory in root_src_dir
-    fs::path dir(root_src_dir);
-    do {
-      dir = dir.parent_path();
-      if (fs::is_directory(dir / ".carbon")) {
-        root_src_dir = dir;
-        break;
-      }
-    } while (!dir.empty());
-  }
-  
-  // beginning with root_src_dir, we'll search upwards until we find a directory
-  // containing a '.carbon' directory; otherwise we take root_src_dir 
-
-  // if root_src_dir/.carbon does not exist, create it
-  fs::path carbon_dir_path = root_src_dir / ".carbon";
   fs::path rel(fs::relative(srcfp, root_src_dir));
-
-  if (rel.string().find("/..") != string::npos)
+  if (rel.string().find("/..") != string::npos) {
+    llvm::errs() << "collect : failed to compute relative path\n";
     return;
+  }
 
-  fs::path src_carbon_path = carbon_dir_path / rel;
-  fs::path src_carbon_dir = src_carbon_path.parent_path();
+  fs::path carbon_dir = root_bin_dir / ".carbon";
+  fs::path carbon_src = carbon_dir / rel;
 
-  fs::create_directories(src_carbon_dir.string());
+  fs::create_directories(carbon_src.parent_path());
 
-  ofstream ofs(src_carbon_path.string() + ".carbon");
+  ofstream ofs(carbon_src.string() + ".carbon");
   {
 #ifdef CARBON_BINARY
     boost::archive::binary_oarchive oa(ofs);

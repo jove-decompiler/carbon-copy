@@ -55,6 +55,7 @@ struct collector_priv;
 class collector {
   boost::filesystem::path srcfp;
   boost::filesystem::path root_src_dir;
+  boost::filesystem::path root_bin_dir;
 
   std::unique_ptr<collector_priv> priv;
 
@@ -63,7 +64,8 @@ public:
   ~collector();
 
   void set_args(const boost::filesystem::path& srcfp,
-                const boost::filesystem::path& root_src_dir);
+                const boost::filesystem::path& root_src_dir,
+                const boost::filesystem::path& root_bin_dir);
   void set_invocation_macros(
       const std::vector<std::pair<std::string, bool /*isUndef*/>> &Macros);
   void
