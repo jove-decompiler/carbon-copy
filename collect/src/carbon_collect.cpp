@@ -474,6 +474,16 @@ public:
 
   bool ParseArgs(const CompilerInstance &CI,
                  const vector<string> &args) override {
+    //
+    // we only process C code.
+    //
+    {
+      const LangOptions &LO = CI.getLangOpts();
+      bool is_c = LO.C99 || LO.C11;
+      if (!is_c)
+        return false;
+    }
+
     // XXX
     gl_SM = &CI.getSourceManager();
 
