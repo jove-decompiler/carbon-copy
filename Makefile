@@ -13,3 +13,8 @@ collect:
 clean:
 	$(MAKE) -C extract clean
 	$(MAKE) -C collect clean
+
+.PHONY: install
+install:
+	$(MAKE) -C extract install
+	$(MAKE) -C collect install

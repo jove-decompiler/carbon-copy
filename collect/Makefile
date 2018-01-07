@@ -32,3 +32,7 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.cpp Makefile
 .PHONY: clean
 clean:
 	rm -rf $(BUILDDIR)/*
+
+.PHONY: install
+install: $(BUILDDIR)/carbon-collect.so
+	install $^ /usr/local/lib

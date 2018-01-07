@@ -1,5 +1,6 @@
 # this just obtains the directory this Makefile resides in
 ROOT_DIR := $(shell cd $(dir $(word $(words $(MAKEFILE_LIST)),$(MAKEFILE_LIST)));pwd)
+
 CXX := clang++
 
 CXXFLAGS := -O3 -g -Weverything -Wno-c++98-compat -Wno-shadow-field-in-constructor -Wno-padded -std=c++11
@@ -40,3 +41,7 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.cpp Makefile
 .PHONY: clean
 clean:
 	rm -rf $(BUILDDIR)/*
+
+.PHONY: install
+install: $(BUILDDIR)/carbon-extract
+	install $^ /usr/local/bin
