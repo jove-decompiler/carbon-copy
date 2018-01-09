@@ -16,7 +16,7 @@ namespace fs = boost::filesystem;
 
 namespace carbon {
 
-static const bool debugMode = false;
+static const bool debugMode = true;
 
 struct clang_source_file_priv_t {
   FileID fid;
@@ -25,6 +25,8 @@ struct clang_source_file_priv_t {
 };
 
 static collector c;
+static fs::path root_src_dir;
+static fs::path root_bin_dir;
 
 // we keep a list of macro uses to apply at the close since the preprocessor
 // will expand macros before the parser will notify of the AST's therein
@@ -165,10 +167,17 @@ public:
   // Hook called whenever a macro definition is seen.
   //
   void MacroDefined(const Token &MacroNameTok, const MacroDirective *MD) {
+    if (debugMode)
+      llvm::errs() << "MacroDefined "
+                   << MacroNameTok.getIdentifierInfo()->getName();
+
     const MacroInfo *MI = MD->getMacroInfo();
 
-    if (!MI || MI->isBuiltinMacro() || isInBuiltin(MI->getDefinitionLoc()))
+    if (!MI || MI->isBuiltinMacro() || isInBuiltin(MI->getDefinitionLoc())) {
+      if (debugMode)
+        llvm::errs() << '\n';
       return;
+    }
 
     SourceRange SR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
 
@@ -185,9 +194,8 @@ public:
     src_rng.beg -= get_backwards_offset_to_new_line(src_rng);
 
     if (debugMode)
-      llvm::errs() << "MacroDefined "
-                   << MacroNameTok.getIdentifierInfo()->getName() << ' '
-                   << src_rng << '\n';
+      llvm::errs() << ' ' << src_rng << '\n';
+
     c.code(normalize_source_range(src_rng));
 
     //
@@ -227,11 +235,18 @@ public:
   //
   void MacroExpands(const Token &MacroNameTok, const MacroDefinition &MD,
                     SourceRange userSR, const MacroArgs *Args) {
+    if (debugMode)
+      llvm::errs() << "MacroExpands "
+                   << MacroNameTok.getIdentifierInfo()->getName();
+
     const MacroInfo *MI = MD.getMacroInfo();
 
     if (!MI || MI->isBuiltinMacro() || isInBuiltin(MI->getDefinitionLoc()) ||
-        isInBuiltin(userSR.getBegin()))
+        isInBuiltin(userSR.getBegin())) {
+      if (debugMode)
+        llvm::errs() << '\n';
       return;
+    }
 
     SourceRange useeSR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
 
@@ -247,9 +262,7 @@ public:
     c.use(user, normalize_source_range(usee));
 
     if (debugMode)
-      llvm::errs() << "MacroExpands "
-                   << MacroNameTok.getIdentifierInfo()->getName() << ' ' << user
-                   << " ---> " << usee << '\n';
+      llvm::errs() << ' ' << user << " ---> " << usee << '\n';
   }
 
   //
@@ -503,8 +516,8 @@ public:
     //
     // parse arguments
     //
-    fs::path root_src_dir(args[0]);
-    fs::path root_bin_dir(args[1]);
+    root_src_dir = args[0];
+    root_bin_dir = args[1];
 
     if (args.size() != 2 ||
         !fs::is_directory(root_src_dir) ||
@@ -770,7 +783,12 @@ clang_source_file_t top_level_system_header(const clang_source_file_t &f) {
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
                               const clang_source_file_t &f) {
-  return os << path_of_clang_source_file(f).string();
+  fs::path srcfp(path_of_clang_source_file(f));
+
+  if (clang_is_system_source_file(f))
+    return os << srcfp.string();
+  else
+    return os << fs::relative(srcfp, root_src_dir).string();
 }
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
