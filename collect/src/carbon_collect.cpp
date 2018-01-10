@@ -59,6 +59,12 @@ static bool isInBuiltin(SourceLocation Loc) {
   return buffNm == "<built-in>" || buffNm == "<scratch space>";
 }
 
+static bool LocBacked(SourceLocation Loc) {
+  return gl_SM->getFileEntryForID(gl_SM->getDecomposedExpansionLoc(Loc).first)
+             ? true
+             : false;
+}
+
 class CarbonCollectVisitor : public RecursiveASTVisitor<CarbonCollectVisitor> {
   SourceManager &SM;
 
@@ -172,14 +178,13 @@ public:
                    << MacroNameTok.getIdentifierInfo()->getName();
 
     const MacroInfo *MI = MD->getMacroInfo();
+    SourceRange SR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
 
-    if (!MI || MI->isBuiltinMacro() || isInBuiltin(MI->getDefinitionLoc())) {
+    if (!LocBacked(SR.getBegin())) {
       if (debugMode)
         llvm::errs() << '\n';
       return;
     }
-
-    SourceRange SR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
 
     //
     // heavy-weight machinery is required to acquire the source range for a
@@ -196,7 +201,7 @@ public:
     if (debugMode)
       llvm::errs() << ' ' << src_rng << '\n';
 
-    c.code(normalize_source_range(src_rng));
+    c.code(src_rng);
 
     //
     // if the macro here is being redefined, we need to make sure that all code
@@ -235,34 +240,31 @@ public:
   //
   void MacroExpands(const Token &MacroNameTok, const MacroDefinition &MD,
                     SourceRange userSR, const MacroArgs *Args) {
+    if (!LocBacked(userSR.getBegin()))
+      return;
+
+    clang_source_range_t user(clang_source_range(userSR));
+
     if (debugMode)
       llvm::errs() << "MacroExpands "
-                   << MacroNameTok.getIdentifierInfo()->getName();
+                   << MacroNameTok.getIdentifierInfo()->getName() << ' '
+                   << user;
 
     const MacroInfo *MI = MD.getMacroInfo();
+    SourceRange useeSR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
 
-    if (!MI || MI->isBuiltinMacro() || isInBuiltin(MI->getDefinitionLoc()) ||
-        isInBuiltin(userSR.getBegin())) {
+    if (!LocBacked(useeSR.getBegin())) {
       if (debugMode)
         llvm::errs() << '\n';
       return;
     }
 
-    SourceRange useeSR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
-
-    clang_source_range_t user(clang_source_range(userSR));
     clang_source_range_t usee(clang_source_range(useeSR));
-    usee.end = usee.beg +
-               static_cast<clang_source_location_t>(
-                   Lexer::getSourceText(CharSourceRange::getTokenRange(useeSR),
-                                        SM, CI.getLangOpts(), nullptr)
-                       .size());
-    usee.beg -= get_backwards_offset_to_new_line(usee);
-
-    c.use(user, normalize_source_range(usee));
 
     if (debugMode)
-      llvm::errs() << ' ' << user << " ---> " << usee << '\n';
+      llvm::errs() << " ---> " << usee << '\n';
+
+    c.use(user, usee);
   }
 
   //
@@ -604,17 +606,18 @@ clang_source_range_t clang_source_range(const SourceRange &SR) {
     mult = (*it).second;
   } else {
     const FileEntry *FE = gl_SM->getFileEntryForID(fid);
+    if (FE) {
+      auto currmul_it = src_f_mult_map.find(FE->getUniqueID());
+      if (currmul_it == src_f_mult_map.end())
+        currmul_it = src_f_mult_map.insert({FE->getUniqueID(), 0}).first;
 
-    auto currmul_it = src_f_mult_map.find(FE->getUniqueID());
-    if (currmul_it == src_f_mult_map.end())
-      currmul_it = src_f_mult_map.insert({FE->getUniqueID(), 0}).first;
+      unsigned &currmult = (*currmul_it).second;
 
-    unsigned &currmult = (*currmul_it).second;
-
-    src_rng_mult_map[fid] = currmult;
-    mult = currmult;
-
-    ++currmult;
+      src_rng_mult_map[fid] = currmult;
+      mult = currmult++;
+    } else {
+      mult = 1;
+    }
   }
 
   int beg = static_cast<int>(beginInfo.second);
@@ -649,33 +652,18 @@ operator=(const clang_source_file_t &rhs) {
 }
 
 bool clang_source_file_t::operator==(const clang_source_file_t &rhs) const {
-  if (!priv && !rhs.priv)
-    return true;
-
-  if (priv && rhs.priv) {
-    const FileEntry *FE = gl_SM->getFileEntryForID(priv->fid);
-    const FileEntry *rhs_FE = gl_SM->getFileEntryForID(rhs.priv->fid);
-
-    return FE->getUniqueID() == rhs_FE->getUniqueID();
-  }
-
-  return false;
+  return priv->fid == rhs.priv->fid;
 }
 
 size_t hash_of_clang_source_file(const clang_source_file_t &f) {
-  if (!f.priv)
-    return 0;
-
-  const FileEntry *FE = gl_SM->getFileEntryForID(f.priv->fid);
-
-  size_t hash = 23;
-  hash = hash * 31 + FE->getUniqueID().getDevice();
-  hash = hash * 31 + FE->getUniqueID().getFile();
-  return hash;
+  return f.priv->fid.getHashValue();
 }
 
 fs::path path_of_clang_source_file(const clang_source_file_t &f) {
   const FileEntry *FE = gl_SM->getFileEntryForID(f.priv->fid);
+  if (!FE)
+    return fs::path();
+
   fs::path p(FE->getName());
   return fs::canonical(p);
 }

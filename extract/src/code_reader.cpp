@@ -4,8 +4,10 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <boost/filesystem.hpp>
 
 using namespace std;
+namespace fs = boost::filesystem;
 
 namespace carbon {
 
@@ -80,18 +82,31 @@ code_reader::code_reader(const collection_t &g)
     priv->syst_file_sizes[i] = is.tellg();
   }
 #else
-
   priv->user_file_sizes.resize(depctx.user_src_f_paths.size());
   priv->syst_file_sizes.resize(depctx.syst_src_f_paths.size());
 
   for (unsigned i = 0; i < depctx.user_src_f_paths.size(); ++i) {
-    ifstream is(depctx.user_src_f_paths[i]);
+    const string& path = depctx.user_src_f_paths[i];
+
+    if (!fs::exists(path)) {
+      cerr << "error: failed to open source file '" << path << '\'' << endl;
+      exit(1);
+    }
+
+    ifstream is(path);
     is.seekg(0, std::ios::end);
     priv->user_file_sizes[i] = static_cast<unsigned>(is.tellg());
   }
 
   for (unsigned i = 0; i < depctx.syst_src_f_paths.size(); ++i) {
-    ifstream is(depctx.syst_src_f_paths[i]);
+    const string& path = depctx.syst_src_f_paths[i];
+
+    if (!fs::exists(path)) {
+      cerr << "error: failed to open source file '" << path << '\'' << endl;
+      exit(1);
+    }
+
+    ifstream is(path);
     is.seekg(0, std::ios::end);
     priv->syst_file_sizes[i] = static_cast<unsigned>(is.tellg());
   }

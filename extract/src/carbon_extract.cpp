@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
   //
   // print code
   //
-  ofstream o(ofp.string(), ofstream::out | ofstream::app);
+  ofstream o(ofp.string());
 
   //
   // XXX always include stddef.h. unfortunately, stddef.h can be included in a
