@@ -508,7 +508,7 @@ public:
     {
       const LangOptions &LO = CI.getLangOpts();
       bool is_c = !LO.CPlusPlus && !LO.CPlusPlus11 && !LO.CPlusPlus14 &&
-                  !LO.CPlusPlus1z && !LO.CPlusPlus2a && !LO.ObjC1 && !LO.ObjC2;
+                  !LO.CPlusPlus17 && !LO.CPlusPlus2a && !LO.ObjC1 && !LO.ObjC2;
       if (!is_c) {
         llvm::outs() << "collect: skipping " << src << '\n';
         return false;
