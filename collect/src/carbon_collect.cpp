@@ -518,23 +518,20 @@ public:
     //
     // parse arguments
     //
-    root_src_dir = args[0];
-    root_bin_dir = args[1];
-
     if (args.size() != 2 ||
-        !fs::is_directory(root_src_dir) ||
-        !fs::is_directory(root_bin_dir)) {
+        !fs::is_directory(args[0]) ||
+        !fs::is_directory(args[1])) {
       llvm::errs() << "Usage: "
-        "-load carbon-collect.so "
-        "-add-plugin carbon-collect "
-        "-plugin-arg-carbon-collect root_source_directory "
-        "-plugin-arg-carbon-collect root_build_directory\n";
+                      "-load carbon-collect.so "
+                      "-add-plugin carbon-collect "
+                      "-plugin-arg-carbon-collect root_source_directory "
+                      "-plugin-arg-carbon-collect root_build_directory\n";
       return false;
     }
 
     c.set_args(fs::canonical(fs::path(src.str())),
-               fs::canonical(root_src_dir),
-               fs::canonical(root_bin_dir));
+               fs::canonical(args[0] /* src */),
+               fs::canonical(args[1] /* bin */));
 
     gl_SM = &CI.getSourceManager(); /* XXX */
     return true;
