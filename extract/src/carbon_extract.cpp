@@ -259,8 +259,8 @@ parse_command_line_arguments(int argc, char **argv) {
         vm);
     po::notify(vm);
 
-    if (vm.count("help") || !vm.count("code")) {
-      cout << "Usage: carbon-extract [options] code...\n";
+    if (vm.count("help") || !vm.count("out") || !vm.count("code")) {
+      cout << "Usage: carbon-extract [options] -o output code...\n";
       cout << desc;
       exit(0);
     }
