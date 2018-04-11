@@ -16,7 +16,7 @@ namespace fs = boost::filesystem;
 
 namespace carbon {
 
-static const bool debugMode = true;
+static const bool debugMode = false;
 
 struct clang_source_file_priv_t {
   FileID fid;
