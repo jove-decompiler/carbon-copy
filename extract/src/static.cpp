@@ -29,10 +29,6 @@ void build_static_function_definitions_map(
   for (auto &entry : g.g[boost::graph_bundle].static_defs) {
     bool *b = new bool(false);
 
-#if 0
-    cerr << entry.first << endl;
-#endif
-
     for (auto &def_sr : entry.second) {
       // get definition vertex
       auto &def_sr_map =
@@ -52,9 +48,8 @@ void build_static_function_definitions_map(
              << endl;
         continue;
       }
-      auto def_vert = *(*def_vert_it).second.begin();
 
-      out[def_vert] = b;
+      out[*(*def_vert_it).second.begin()] = b;
 
 #if 0
       cerr << "  [offset: " << def_sr.beg << " file: "

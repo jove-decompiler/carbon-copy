@@ -133,14 +133,7 @@ string code_reader::source_text(code_t c) {
                     ? priv->g[boost::graph_bundle].syst_src_f_paths
                     : priv->g[boost::graph_bundle].user_src_f_paths;
 
-#if 0
-  auto &files =
-      is_system_source_file(src_rng.f) ? priv->syst_files : priv->user_files;
-
-  ifstream &is = *(files[index_of_source_file(src_rng.f)]);
-#else
   ifstream is(paths.at(index_of_source_file(src_rng.f)));
-#endif
   if (!is) {
     cerr << "error: could not read "
          << paths.at(index_of_source_file(src_rng.f)) << endl;
@@ -150,7 +143,8 @@ string code_reader::source_text(code_t c) {
 
   string res;
   res.resize(static_cast<unsigned>(src_rng.end - src_rng.beg));
-  is.seekg(static_cast<unsigned>(src_rng.beg) % sizes.at(index_of_source_file(src_rng.f)));
+  is.seekg(static_cast<unsigned>(src_rng.beg) %
+           sizes.at(index_of_source_file(src_rng.f)));
   is.read(&res[0], static_cast<ssize_t>(res.size()));
 
   if (!is) {
@@ -161,9 +155,6 @@ string code_reader::source_text(code_t c) {
     exit(1);
   }
 
-#if 0
-  res += ("\n/* " + debug_source_description(c) + " */");
-#endif
   return res;
 }
 
@@ -178,7 +169,8 @@ string code_reader::debug_source_description(code_t c) {
 
   unsigned n = static_cast<unsigned>(src_rng.end - src_rng.beg);
 
-  unsigned beg = static_cast<unsigned>(src_rng.beg) % sizes.at(index_of_source_file(src_rng.f));
+  unsigned beg = static_cast<unsigned>(src_rng.beg) %
+                 sizes.at(index_of_source_file(src_rng.f));
   unsigned end = beg + n;
 
   ostringstream buff;

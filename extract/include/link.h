@@ -1,10 +1,11 @@
 #pragma once
 #include "collection.h"
-#include <unordered_set>
-#include <string>
+#include "collection_impl.h"
 #include <boost/filesystem.hpp>
-#include <vector>
 #include <functional>
+#include <string>
+#include <unordered_set>
+#include <vector>
 
 namespace carbon {
 
@@ -19,5 +20,5 @@ typedef std::pair<
     std::unordered_set<boost::filesystem::path, boost_filesystem_path_hasher_t>>
     collection_sources_t;
 
-collection_t *link(const collection_sources_t &);
+void link(collection_t &out, const collection_sources_t &);
 }

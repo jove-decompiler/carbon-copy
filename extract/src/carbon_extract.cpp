@@ -5,6 +5,7 @@
 #include "code_reader.h"
 #include "graphviz.h"
 #include "static.h"
+#include <algorithm>
 #include <tuple>
 #include <iostream>
 #include <sstream>
@@ -43,15 +44,22 @@ int main(int argc, char **argv) {
   //
   // take every collection for each source file, and merge (link) them together
   //
-  collection_t* clc = link(clc_files);
-  code_reader c_reader(*clc);
+  collection_t clc;
+  link(clc, clc_files);
+
+  cerr << "hdr dirs:" << endl;
+  for (const string& dir : clc.g[boost::graph_bundle].include.dirs) {
+    cerr << "-I " << dir << endl;
+  }
+
+  code_reader c_reader(clc);
 
   //
   // compute a minimal set which contains the requested code
   //
   unordered_set<code_t> reachable;
   set<code_t> desired_code =
-      reachable_code(reachable, *clc, desired_code_locs, desired_glbs, only_tys);
+      reachable_code(reachable, clc, desired_code_locs, desired_glbs, only_tys);
 
   //
   // output graph visualization if requested
@@ -60,110 +68,63 @@ int main(int argc, char **argv) {
     ofstream dot_f(
         (fmt("%s_deps_reachable_user.dot") % ofp.filename().string()).str(),
         ofstream::out);
-    output_graphviz_of_reachable_user_code(dot_f, c_reader, reachable, *clc);
+    output_graphviz_of_reachable_user_code(dot_f, c_reader, reachable, clc);
   }
 
   if (graphviz) {
     ofstream dot_f(
         (fmt("%s_deps_reachable.dot") % ofp.filename().string()).str(),
         ofstream::out);
-    output_graphviz_of_reachable_code(dot_f, c_reader, reachable, *clc);
+    output_graphviz_of_reachable_code(dot_f, c_reader, reachable, clc);
   }
 
   //
   // topologically sort the code
   //
   list<code_t> toposorted;
-  topologically_sort_code(toposorted, *clc);
-
-  //
-  //
-  //
-  unordered_map<code_t, bool*> static_defs_printed;
-  build_static_function_definitions_map(*clc, static_defs_printed);
+  topologically_sort_code(toposorted, clc);
 
   //
   // print code
   //
-  ofstream o(ofp.string());
+  ofstream *ofs = nullptr;
+  ostream &o = ofp.empty() ? cout : *(ofs = new ofstream(ofp.string()));
 
-  //
-  // XXX always include stddef.h. unfortunately, stddef.h can be included in a
-  // variety of insane ways. e.g., one may #define __need_ptrdiff_t and then
-  // later #include <stdlib.h> which #include's <stddef.h>. Thus one may think
-  // that since this chain of includes led to the definition of the type
-  // ptrdiff_t, printing #include <stdlib.h> will define ptrdiff_t. But this is
-  // not so. stdlib.h only #define's __need_size_t on my system, so on its own,
-  // such an inclusion will not yield ptrdiff_t.
-  //
-#if 0
-  o << "#include <stddef.h>" << endl << endl;
-#endif
+  auto& incs = clc.g[boost::graph_bundle].include.dirs;
 
   unordered_set<string> sys_hdrs_incl;
   for (code_t c : toposorted) {
-    if (is_dummy_code(*clc, c) || reachable.find(c) == reachable.end()) {
+    if (is_dummy_code(clc, c))
       continue;
+
+    if (reachable.find(c) == reachable.end())
+      continue;
+
+    if (is_system_code(clc, c)) {
+      string sys_hdr = top_level_system_header_of_code(clc, c);
+      if (sys_hdrs_incl.find(sys_hdr) != sys_hdrs_incl.end())
+        continue;
+      sys_hdrs_incl.insert(sys_hdr);
+
+      fs::path sys_hdr_path(sys_hdr);
+      do {
+        sys_hdr_path = sys_hdr_path.parent_path();
+        if (incs.find(sys_hdr_path.string()) != incs.end()) {
+          sys_hdr = fs::relative(sys_hdr, sys_hdr_path).string();
+          break;
+        }
+      } while (!sys_hdr_path.empty());
+
+      o << "#include <" << sys_hdr << '>' << endl << endl;
     } else {
-      // check if the code is a definition with the same symbol as a previous
-      // definition we've already printed
-      auto static_def_it = static_defs_printed.find(c);
-      if (static_def_it != static_defs_printed.end()) {
-        if (*(*static_def_it).second)
-          continue;
-        else
-          *(*static_def_it).second = true;
-      }
-    }
-
-    if (!is_system_code(*clc, c) || syst_code) {
       if (debug)
-        o << "/* " << c_reader.debug_source_description(c) << " */"
-          << endl;
-
-      if (desired_code.find(c) != desired_code.end())
-        cout << static_cast<long>(o.tellp()) + 1 << endl;
+        o << "/* " << c_reader.debug_source_description(c) << " */" << endl;
 
       o << c_reader.source_text(c) << endl << endl;
-      continue;
     }
-
-    if (boost::ends_with(system_header_of_code(*clc, c), "stddefs.h"))
-      continue;
-
-    string sys_hdr = top_level_system_header_of_code(*clc, c);
-
-    if (sys_hdrs_incl.find(sys_hdr) != sys_hdrs_incl.end()) {
-#if 0
-      cerr << "system header '" << sys_hdr << "' already included" << endl;
-      cerr << "for " << c_reader.source_text(c) << endl;
-#endif
-      continue;
-    }
-    sys_hdrs_incl.insert(sys_hdr);
-
-#if 0
-    cerr << "including '" << sys_hdr << '\'' << endl;
-    cerr << "for " << c_reader.source_text(c) << endl;
-#endif
-
-    const char *inc_str;
-
-    // XXX TODO implement more generally using the -I's passed to clang
-    if (boost::starts_with(sys_hdr, "/usr/include/i386-linux-gnu/")) {
-      // needed this case for "#include <sys/time.h>"
-      inc_str = sys_hdr.c_str() + 13 + 15;
-    } else if (boost::starts_with(sys_hdr, "/usr/include/")) {
-      inc_str = sys_hdr.c_str() + 13;
-    } else {
-      vector<char> tmp(sys_hdr.begin(), sys_hdr.end());
-      tmp.push_back('\0');
-      inc_str = basename(tmp.data());
-    }
-
-    o << "#include <" << inc_str << ">" << endl << endl;
   }
 
+  delete ofs;
   return 0;
 }
 
@@ -259,7 +220,7 @@ parse_command_line_arguments(int argc, char **argv) {
         vm);
     po::notify(vm);
 
-    if (vm.count("help") || !vm.count("out") || !vm.count("code")) {
+    if (vm.count("help") || !vm.count("code")) {
       cout << "Usage: carbon-extract [options] -o output code...\n";
       cout << desc;
       exit(0);

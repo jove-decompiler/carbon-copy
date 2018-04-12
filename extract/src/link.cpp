@@ -1,11 +1,11 @@
 #include "link.h"
-#include "read_collection.h"
 #include "collection_impl.h"
+#include "read_collection.h"
+#include <boost/icl/interval_map.hpp>
 #include <collect_impl.h>
+#include <iostream>
 #include <queue>
 #include <set>
-#include <iostream>
-#include <boost/icl/interval_map.hpp>
 
 using namespace std;
 namespace fs = boost::filesystem;
@@ -36,9 +36,8 @@ static void vertex_interval_maps_of_graph(
         &syst_sl_vert_map,
     depends_t &g);
 
-collection_t *link(const collection_sources_t &cfl) {
-  collection_t *res = new collection_t;
-  depends_t &into = res->g;
+void link(collection_t &res, const collection_sources_t &cfl) {
+  depends_t &into = res.g;
 
   cerr << "linking dependency graphs..." << endl;
 
@@ -57,6 +56,16 @@ collection_t *link(const collection_sources_t &cfl) {
          << endl;
 
     read_collection_file(tmp, fp);
+
+    for (const string& sym : g[boost::graph_bundle].macros.def)
+      into[boost::graph_bundle].macros.def.insert(sym);
+
+    for (const string& sym : g[boost::graph_bundle].macros.und)
+      into[boost::graph_bundle].macros.und.insert(sym);
+
+    for (const string& dir : g[boost::graph_bundle].include.dirs)
+      into[boost::graph_bundle].include.dirs.insert(dir);
+
 #if 0
       cerr << "linking " << fp.stem().filename() << endl;
 #else
@@ -106,7 +115,6 @@ collection_t *link(const collection_sources_t &cfl) {
 
   cerr << "finished linking dependency graphs (" << boost::num_vertices(into)
        << " vertices, " << boost::num_edges(into) << " edges)." << endl;
-  return res;
 }
 
 void relocate(

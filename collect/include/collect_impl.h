@@ -91,15 +91,18 @@ struct depends_context_t {
   std::vector<std::string> toplvl_syst_src_f_paths;
 
   struct {
-    std::vector<std::pair<std::string, bool /*is undef*/>> macros;
-    std::set<std::string> hdr_dirs;
-  } invocation;
+    std::set<std::string> def, und;
+  } macros;
+
+  struct {
+    std::set<std::string> dirs;
+  } include;
 
   template <class Archive>
   void serialize(Archive &ar, const unsigned int) {
     ar &glbl_defs &glbl_decls &static_defs &static_decls &user_src_f_paths
-        &syst_src_f_paths &toplvl_syst_src_f_paths &invocation
-            .macros &invocation.hdr_dirs;
+        &syst_src_f_paths &toplvl_syst_src_f_paths &macros.def &macros
+            .und &include.dirs;
   }
 };
 

@@ -621,12 +621,17 @@ void collector::set_args(const fs::path &_srcfp, const fs::path &_root_src_dir,
 
 void collector::set_invocation_macros(
     const std::vector<std::pair<std::string, bool /*isUndef*/>> &Macros) {
-  priv->depctx.invocation.macros = Macros;
+  for (const std::pair<std::string, bool /* IsUndef */>& mac : Macros) {
+    if (mac.second)
+      priv->depctx.macros.und.insert(mac.first);
+    else
+      priv->depctx.macros.def.insert(mac.first);
+  }
 }
 
 void collector::set_invocation_header_directories(
     const std::set<std::string> &dirs) {
-  priv->depctx.invocation.hdr_dirs = dirs;
+  priv->depctx.include.dirs = dirs;
 }
 
 void collector::clang_source_file(const clang_source_file_t &f) {

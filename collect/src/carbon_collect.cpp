@@ -480,19 +480,29 @@ public:
                    << '\n';
 #endif
 
-    set<string> hdr_dirs;
-    for (const HeaderSearchOptions::Entry &e :
+    std::set<std::string> hdr_dirs;
+
+    for (const HeaderSearchOptions::Entry &h :
          CI.getHeaderSearchOpts().UserEntries)
-      if (fs::is_directory(e.Path))
-        hdr_dirs.insert(fs::canonical(e.Path).string());
+      if (fs::is_directory(h.Path))
+        hdr_dirs.insert(fs::canonical(h.Path).string());
+
+    c.set_invocation_header_directories(hdr_dirs);
+
+#if 0
+    llvm::errs() << "SystemHeaderPrefixes:\n";
+    for (const HeaderSearchOptions::SystemHeaderPrefix &h :
+         CI.getHeaderSearchOpts().SystemHeaderPrefixes) {
+      llvm::errs() << h.Prefix << ' '
+                   << (fs::is_directory(h.Prefix) ? 'Y' : 'N') << '\n';
+    }
+#endif
 
 #if 0
     llvm::errs() << "header dirs:\n";
     for (const string& d : hdr_dirs)
       llvm::errs() << "  " << d << '\n';
 #endif
-
-    c.set_invocation_header_directories(hdr_dirs);
 
     return llvm::make_unique<CarbonCollectConsumer>(CI);
   }
