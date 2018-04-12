@@ -1,6 +1,5 @@
 #include "toposort.h"
 #include "graphviz_impl.h"
-#include "collection_impl.h"
 #include <collect_impl.h>
 #include <map>
 #include <iostream>
@@ -63,9 +62,9 @@ struct vert_exists_in_set {
   }
 };
 
-void topologically_sort_code(std::list<code_t> &out, const collection_t &g) {
-  topo_edges e_filter(&g.g);
-  boost::filtered_graph<depends_t, topo_edges> fg(g.g, e_filter);
+void topologically_sort_code(std::list<code_t> &out, const depends_t &g) {
+  topo_edges e_filter(&g);
+  boost::filtered_graph<depends_t, topo_edges> fg(g, e_filter);
 
   cerr << "topologically sorting dependency graph..." << endl;
 
@@ -74,7 +73,7 @@ void topologically_sort_code(std::list<code_t> &out, const collection_t &g) {
 
     int i = 0;
     depends_t::vertex_iterator vi, vi_end;
-    for (tie(vi, vi_end) = boost::vertices(g.g); vi != vi_end; ++vi)
+    for (tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi)
       idx_map[*vi] = i++;
 
     map<depends_vertex_t, boost::default_color_type> clr_map;
@@ -104,7 +103,7 @@ void topologically_sort_code(std::list<code_t> &out, const collection_t &g) {
 
       int i = 0;
       depends_t::vertex_iterator vi, vi_end;
-      for (tie(vi, vi_end) = boost::vertices(g.g); vi != vi_end; ++vi)
+      for (tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi)
         idx_map[*vi] = i++;
 
       boost::strong_components(
@@ -140,10 +139,10 @@ void topologically_sort_code(std::list<code_t> &out, const collection_t &g) {
       if (comp_verts.second.size() == 1)
         continue;
 
-      topo_edges _e_filter(&g.g);
+      topo_edges _e_filter(&g);
       vert_exists_in_set v_filter(&comp_verts.second);
       boost::filtered_graph<depends_t, topo_edges, vert_exists_in_set> fg_(
-          g.g, _e_filter, v_filter);
+          g, _e_filter, v_filter);
 
       //
       // also (while we are doing this) keep track of every edge between the
@@ -176,14 +175,14 @@ void topologically_sort_code(std::list<code_t> &out, const collection_t &g) {
 
       int i = 0;
       depends_t::vertex_iterator vi, vi_end;
-      for (tie(vi, vi_end) = boost::vertices(g.g); vi != vi_end; ++vi)
+      for (tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi)
         idx_map[*vi] = i++;
 
       map<depends_vertex_t, boost::default_color_type> clr_map;
 
-      topo_edges_excluding_some _e_filter(&g.g, &bad_edges);
+      topo_edges_excluding_some _e_filter(&g, &bad_edges);
       boost::filtered_graph<depends_t, topo_edges_excluding_some> fg_(
-          g.g, _e_filter);
+          g, _e_filter);
 
       boost::topological_sort(
           fg_, back_inserter(out),

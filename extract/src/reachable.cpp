@@ -1,6 +1,4 @@
 #include "reachable.h"
-#include "collection_impl.h"
-#include <collect_impl.h>
 #include <iostream>
 #include <boost/graph/breadth_first_search.hpp>
 #include <boost/icl/interval_map.hpp>
@@ -54,7 +52,7 @@ static void vertex_interval_maps_of_graph(
         &syst_out,
     const depends_t &g);
 
-set<code_t> reachable_code(unordered_set<code_t> &out, const collection_t &g,
+set<code_t> reachable_code(unordered_set<code_t> &out, const depends_t &g,
                            const code_location_list_t &cll,
                            const global_symbol_list_t &gsl, bool only_tys) {
   set<code_t> res;
@@ -69,7 +67,7 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const collection_t &g,
       syst_src_rng_vert_map;
 
   vertex_interval_maps_of_graph(user_src_rng_vert_map, syst_src_rng_vert_map,
-                                g.g);
+                                g);
 
   //
   // map code location list to vertices
@@ -79,7 +77,7 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const collection_t &g,
   unordered_map<string, unsigned> user_f_idx_map;
 
   unsigned j = 0;
-  for (const string &path : g.g[boost::graph_bundle].user_src_f_paths)
+  for (const string &path : g[boost::graph_bundle].user_src_f_paths)
     user_f_idx_map[path] = j++;
 
 #if 0
@@ -87,7 +85,7 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const collection_t &g,
     cerr << entry.second << ' ' << entry.first << endl;
 
   j = 0;
-  for (const auto& entry : g.g[boost::graph_bundle].user_src_f_paths)
+  for (const auto& entry : g[boost::graph_bundle].user_src_f_paths)
     cerr << j++ << ' ' << entry << endl;
 #endif
 
@@ -100,7 +98,7 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const collection_t &g,
     if (f_idx_it == user_f_idx_map.end()) {
       cerr << "source file '" << path
            << "' for given code location does not exist. files: " << endl;
-      for (const string &_path : g.g[boost::graph_bundle].user_src_f_paths)
+      for (const string &_path : g[boost::graph_bundle].user_src_f_paths)
         cerr << "  " << _path << endl;
       assert(false);
     }
@@ -116,7 +114,7 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const collection_t &g,
     auto v = *(*v_it).second.begin();
 
 #if 0
-    cerr << (*f_idx_it).second << " [" << g.g[v].beg << ", " << g.g[v].end
+    cerr << (*f_idx_it).second << " [" << g[v].beg << ", " << g[v].end
          << ")" << endl;
 #endif
 
@@ -125,7 +123,7 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const collection_t &g,
   }
 
 #if 0
-  cerr << g.g[boost::graph_bundle].user_src_f_paths.size() << ' '
+  cerr << g[boost::graph_bundle].user_src_f_paths.size() << ' '
        << user_src_rng_vert_map.size() << endl;
 #endif
 
@@ -133,8 +131,8 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const collection_t &g,
   // map global symbol list to vertices
   //
   for (const string &gs : gsl) {
-    auto gl_it = g.g[boost::graph_bundle].glbl_defs.find(gs);
-    if (gl_it != g.g[boost::graph_bundle].glbl_defs.end()) {
+    auto gl_it = g[boost::graph_bundle].glbl_defs.find(gs);
+    if (gl_it != g[boost::graph_bundle].glbl_defs.end()) {
       source_range_t src_rng;
       for (boost::icl::interval_map<source_location_t, set<depends_vertex_t>>
                &v_map : user_src_rng_vert_map) {
@@ -160,12 +158,12 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const collection_t &g,
 
     int i = 0;
     depends_t::vertex_iterator vi, vi_end;
-    for (tie(vi, vi_end) = boost::vertices(g.g); vi != vi_end; ++vi)
+    for (tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi)
       idx_map[*vi] = i++;
 
     if (only_tys) {
-      reachable_ty_edges e_filter(&g.g);
-      boost::filtered_graph<depends_t, reachable_ty_edges> fg(g.g, e_filter);
+      reachable_ty_edges e_filter(&g);
+      boost::filtered_graph<depends_t, reachable_ty_edges> fg(g, e_filter);
 
       boost::breadth_first_search(
           fg, v,
@@ -177,8 +175,8 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const collection_t &g,
                   boost::associative_property_map<map<depends_vertex_t, int>>(
                       idx_map)));
     } else {
-      reachable_edges e_filter(&g.g);
-      boost::filtered_graph<depends_t, reachable_edges> fg(g.g, e_filter);
+      reachable_edges e_filter(&g);
+      boost::filtered_graph<depends_t, reachable_edges> fg(g, e_filter);
 
       boost::breadth_first_search(
           fg, v,
@@ -200,7 +198,7 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const collection_t &g,
   // arbitrarily choose one of them, and move edges from the other static
   // definitions to the arbitrarily choosen one.
   //
-  for (auto &entry : g.g[boost::graph_bundle].static_defs) {
+  for (auto &entry : g[boost::graph_bundle].static_defs) {
     bool exists = false;
 
     for (auto &def_sr : entry.second) {
@@ -215,9 +213,9 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const collection_t &g,
                 "ranges map [symbol: "
              << entry.first << " offset: " << def_sr.beg << " file: "
              << (is_system_source_file(def_sr.f)
-                     ? g.g[boost::graph_bundle]
+                     ? g[boost::graph_bundle]
                            .syst_src_f_paths[index_of_source_file(def_sr.f)]
-                     : g.g[boost::graph_bundle]
+                     : g[boost::graph_bundle]
                            .user_src_f_paths[index_of_source_file(def_sr.f)])
              << endl;
         continue;

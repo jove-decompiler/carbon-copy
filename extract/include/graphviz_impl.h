@@ -2,6 +2,7 @@
 #include "code_reader.h"
 #include <collect_impl.h>
 #include <map>
+#include <tuple>
 #include <boost/graph/graphviz.hpp>
 
 namespace carbon {
@@ -118,7 +119,7 @@ void output_graphviz(std::ostream &out, code_reader &cr, const Graph &g) {
 
   int i = 0;
   vertex_iterator_t vi, vi_end;
-  for (tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi)
+  for (std::tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi)
     idx_map[*vi] = i++;
 
 #if 0

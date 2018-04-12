@@ -1,5 +1,4 @@
 #include "link.h"
-#include "collection_impl.h"
 #include "read_collection.h"
 #include <boost/icl/interval_map.hpp>
 #include <collect_impl.h>
@@ -36,9 +35,7 @@ static void vertex_interval_maps_of_graph(
         &syst_sl_vert_map,
     depends_t &g);
 
-void link(collection_t &res, const collection_sources_t &cfl) {
-  depends_t &into = res.g;
-
+void link(depends_t &into, const collection_sources_t &cfl) {
   cerr << "linking dependency graphs..." << endl;
 
   vector<boost::icl::interval_map<source_location_t, set<depends_vertex_t>>>
@@ -48,14 +45,13 @@ void link(collection_t &res, const collection_sources_t &cfl) {
   vertex_interval_maps_of_graph(into_user_sl_vert_map, into_syst_sl_vert_map,
                                 into);
   for (const fs::path &fp : cfl.second) {
-    collection_t tmp;
-    depends_t &g = tmp.g;
+    depends_t g;
 
     cerr << "linking "
          << fs::relative(fp, cfl.first).replace_extension("").string()
          << endl;
 
-    read_collection_file(tmp, fp);
+    read_collection_file(g, fp);
 
     for (const string& sym : g[boost::graph_bundle].macros.def)
       into[boost::graph_bundle].macros.def.insert(sym);

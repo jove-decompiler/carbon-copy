@@ -1,5 +1,4 @@
 #include "read_collection.h"
-#include "collection_impl.h"
 #include <collect_impl.h>
 #include <fstream>
 #include <boost/graph/adj_list_serialize.hpp>
@@ -20,14 +19,14 @@ namespace fs = boost::filesystem;
 
 namespace carbon {
 
-void read_collection_file(collection_t &out, const fs::path &p) {
+void read_collection_file(depends_t &g, const fs::path &p) {
   ifstream ifs(p.string());
 #ifdef CARBON_BINARY
   boost::archive::binary_iarchive ia(ifs);
 #else
   boost::archive::text_iarchive ia(ifs);
 #endif
-  ia >> out.g;
+  ia >> g;
 }
 
 }

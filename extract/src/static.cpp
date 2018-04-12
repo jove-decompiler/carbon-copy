@@ -1,8 +1,6 @@
 #include "static.h"
 #include <vector>
 #include <boost/icl/interval_map.hpp>
-#include "collection_impl.h"
-#include <collect_impl.h>
 #include <iostream>
 
 using namespace std;
@@ -17,16 +15,16 @@ static void vertex_interval_maps_of_graph(
     const depends_t &g);
 
 void build_static_function_definitions_map(
-    const collection_t &g, std::unordered_map<code_t, bool *> &out) {
+    const depends_t &g, std::unordered_map<code_t, bool *> &out) {
   vector<boost::icl::interval_map<source_location_t, set<depends_vertex_t>>>
       user_src_rng_vert_map;
   vector<boost::icl::interval_map<source_location_t, set<depends_vertex_t>>>
       syst_src_rng_vert_map;
 
   vertex_interval_maps_of_graph(user_src_rng_vert_map, syst_src_rng_vert_map,
-                                g.g);
+                                g);
 
-  for (auto &entry : g.g[boost::graph_bundle].static_defs) {
+  for (auto &entry : g[boost::graph_bundle].static_defs) {
     bool *b = new bool(false);
 
     for (auto &def_sr : entry.second) {
@@ -41,9 +39,9 @@ void build_static_function_definitions_map(
                 "ranges map [symbol: "
              << entry.first << " offset: " << def_sr.beg << " file: "
              << (is_system_source_file(def_sr.f)
-                     ? g.g[boost::graph_bundle]
+                     ? g[boost::graph_bundle]
                            .syst_src_f_paths[index_of_source_file(def_sr.f)]
-                     : g.g[boost::graph_bundle]
+                     : g[boost::graph_bundle]
                            .user_src_f_paths[index_of_source_file(def_sr.f)])
              << endl;
         continue;
@@ -54,9 +52,9 @@ void build_static_function_definitions_map(
 #if 0
       cerr << "  [offset: " << def_sr.beg << " file: "
            << (is_system_source_file(def_sr.f)
-                   ? g.g[boost::graph_bundle]
+                   ? g[boost::graph_bundle]
                          .syst_src_f_paths[index_of_source_file(def_sr.f)]
-                   : g.g[boost::graph_bundle]
+                   : g[boost::graph_bundle]
                          .user_src_f_paths[index_of_source_file(def_sr.f)])
            << ']' << endl;
 #endif

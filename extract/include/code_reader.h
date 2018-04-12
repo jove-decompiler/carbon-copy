@@ -1,15 +1,17 @@
 #pragma once
 #include "collection.h"
-#include <memory>
+#include <vector>
 
 namespace carbon {
 
 struct code_reader_priv;
 class code_reader {
-  std::unique_ptr<code_reader_priv> priv;
+  const depends_t &g;
+  std::vector<unsigned> user_file_sizes;
+  std::vector<unsigned> syst_file_sizes;
 
 public:
-  code_reader(const collection_t&);
+  code_reader(const depends_t&);
   ~code_reader();
 
   std::string source_text(code_t);

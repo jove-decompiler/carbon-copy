@@ -4,5 +4,5 @@
 
 namespace carbon {
 
-void topologically_sort_code(std::list<code_t> &out, const collection_t &);
+void topologically_sort_code(std::list<code_t> &out, const depends_t &);
 }

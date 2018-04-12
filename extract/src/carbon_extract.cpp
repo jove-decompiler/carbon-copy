@@ -44,22 +44,22 @@ int main(int argc, char **argv) {
   //
   // take every collection for each source file, and merge (link) them together
   //
-  collection_t clc;
-  link(clc, clc_files);
+  depends_t g;
+  link(g, clc_files);
 
   cerr << "hdr dirs:" << endl;
-  for (const string& dir : clc.g[boost::graph_bundle].include.dirs) {
+  for (const string& dir : g[boost::graph_bundle].include.dirs) {
     cerr << "-I " << dir << endl;
   }
 
-  code_reader c_reader(clc);
+  code_reader c_reader(g);
 
   //
   // compute a minimal set which contains the requested code
   //
   unordered_set<code_t> reachable;
   set<code_t> desired_code =
-      reachable_code(reachable, clc, desired_code_locs, desired_glbs, only_tys);
+      reachable_code(reachable, g, desired_code_locs, desired_glbs, only_tys);
 
   //
   // output graph visualization if requested
@@ -68,21 +68,21 @@ int main(int argc, char **argv) {
     ofstream dot_f(
         (fmt("%s_deps_reachable_user.dot") % ofp.filename().string()).str(),
         ofstream::out);
-    output_graphviz_of_reachable_user_code(dot_f, c_reader, reachable, clc);
+    output_graphviz_of_reachable_user_code(dot_f, c_reader, reachable, g);
   }
 
   if (graphviz) {
     ofstream dot_f(
         (fmt("%s_deps_reachable.dot") % ofp.filename().string()).str(),
         ofstream::out);
-    output_graphviz_of_reachable_code(dot_f, c_reader, reachable, clc);
+    output_graphviz_of_reachable_code(dot_f, c_reader, reachable, g);
   }
 
   //
   // topologically sort the code
   //
   list<code_t> toposorted;
-  topologically_sort_code(toposorted, clc);
+  topologically_sort_code(toposorted, g);
 
   //
   // print code
@@ -90,18 +90,18 @@ int main(int argc, char **argv) {
   ofstream *ofs = nullptr;
   ostream &o = ofp.empty() ? cout : *(ofs = new ofstream(ofp.string()));
 
-  auto& incs = clc.g[boost::graph_bundle].include.dirs;
+  auto& incs = g[boost::graph_bundle].include.dirs;
 
   unordered_set<string> sys_hdrs_incl;
   for (code_t c : toposorted) {
-    if (is_dummy_code(clc, c))
+    if (is_dummy_code(g, c))
       continue;
 
     if (reachable.find(c) == reachable.end())
       continue;
 
-    if (is_system_code(clc, c)) {
-      string sys_hdr = top_level_system_header_of_code(clc, c);
+    if (is_system_code(g, c)) {
+      string sys_hdr = top_level_system_header_of_code(g, c);
       if (sys_hdrs_incl.find(sys_hdr) != sys_hdrs_incl.end())
         continue;
       sys_hdrs_incl.insert(sys_hdr);

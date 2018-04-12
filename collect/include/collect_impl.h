@@ -1,8 +1,6 @@
 #pragma once
-#include <string>
-#include <unordered_map>
-#include <vector>
 #include <boost/graph/adjacency_list.hpp>
+#include <string>
 
 namespace carbon {
 
@@ -107,10 +105,11 @@ struct depends_context_t {
 };
 
 typedef boost::adjacency_list<
-    boost::hash_setS, /* no parallel edges */
-    boost::hash_setS,
+    boost::setS, /* no parallel edges */
+    boost::listS,
     boost::bidirectionalS, /* directed graph (with in and out edges) */
-    source_range_t, depends_edge_type_t, depends_context_t> depends_t;
+    source_range_t, depends_edge_type_t, depends_context_t>
+    depends_t;
 
 typedef depends_t::vertex_descriptor depends_vertex_t;
 typedef depends_t::edge_descriptor depends_edge_t;

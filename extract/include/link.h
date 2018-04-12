@@ -1,6 +1,5 @@
 #pragma once
 #include "collection.h"
-#include "collection_impl.h"
 #include <boost/filesystem.hpp>
 #include <functional>
 #include <string>
@@ -20,5 +19,5 @@ typedef std::pair<
     std::unordered_set<boost::filesystem::path, boost_filesystem_path_hasher_t>>
     collection_sources_t;
 
-void link(collection_t &out, const collection_sources_t &);
+void link(depends_t &out, const collection_sources_t &);
 }
