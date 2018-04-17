@@ -1,7 +1,7 @@
 CXX := clang++
 
 CXXFLAGS := -O3 -g -Weverything -Wno-c++98-compat -Wno-shadow-field-in-constructor -Wno-shadow-field-in-constructor -Wno-exit-time-destructors -Wno-global-constructors -Wno-switch-enum -Wno-padded -Wno-weak-vtables -fPIC
-CXXFLAGS += $(filter-out -Wno-maybe-uninitialized,$(filter-out -fno-exceptions,$(filter-out -fno-rtti,$(shell llvm-config --cxxflags))))
+CXXFLAGS += $(filter-out -DNDEBUG,$(filter-out -O3,$(filter-out -O2,$(filter-out -Wno-maybe-uninitialized,$(filter-out -fno-exceptions,$(filter-out -fno-rtti,$(shell llvm-config --cxxflags)))))))
 
 LDFLAGS := -lboost_serialization -lboost_filesystem -lboost_system
 LDFLAGS += $(shell llvm-config --ldflags --libs --system-libs)

@@ -18,12 +18,6 @@ namespace carbon {
 
 static const bool debugMode = false;
 
-struct clang_source_file_priv_t {
-  FileID fid;
-
-  clang_source_file_priv_t(FileID fid) : fid(fid) {}
-};
-
 static collector c;
 static fs::path root_src_dir;
 static fs::path root_bin_dir;
@@ -35,14 +29,16 @@ static list<pair<clang_source_range_t, clang_source_range_t>> if_def_uses;
 //
 // stores most-recent #define for a given macro
 //
-static unordered_map<string, clang_source_range_t> macro_defs;
-static unordered_map<string, SourceRange> _macro_defs;
+static unordered_map<string, clang_source_range_t> _macro_defs;
+static unordered_map<string, SourceRange> macro_defs;
 
 static clang_source_file_t clang_source_file(FileID);
 static clang_source_range_t clang_source_range(const SourceRange &);
 static SourceManager *gl_SM;
+#if 0
 static llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
                                      const clang_source_file_t &f);
+#endif
 static llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
                                      const clang_source_range_t &cl_src_rng);
 
@@ -59,12 +55,6 @@ static bool isInBuiltin(SourceLocation Loc) {
   return buffNm == "<built-in>" || buffNm == "<scratch space>";
 }
 
-static bool LocBacked(SourceLocation Loc) {
-  return gl_SM->getFileEntryForID(gl_SM->getDecomposedExpansionLoc(Loc).first)
-             ? true
-             : false;
-}
-
 class CarbonCollectVisitor : public RecursiveASTVisitor<CarbonCollectVisitor> {
   SourceManager &SM;
 
@@ -78,7 +68,7 @@ public:
 
   bool VisitMemberExpr(MemberExpr *e) {
     if (debugMode)
-      llvm::errs() << "  MemberExpr\n";
+      llvm::errs() << "MemberExpr\n";
 
     needsDecl(clang_source_range(e->getSourceRange()),
               dyn_cast<FieldDecl>(e->getMemberDecl())->getParent());
@@ -88,7 +78,7 @@ public:
 
   bool VisitOffsetOfExpr(OffsetOfExpr *e) {
     if (debugMode)
-      llvm::errs() << "  OffsetOfExpr\n";
+      llvm::errs() << "OffsetOfExpr\n";
 
     needsType(clang_source_range(e->getSourceRange()),
               e->getTypeSourceInfo()->getType().getTypePtrOrNull());
@@ -98,7 +88,7 @@ public:
 
   bool VisitCStyleCastExpr(CStyleCastExpr *e) {
     if (debugMode)
-      llvm::errs() << "  CStyleCastExpr\n";
+      llvm::errs() << "CStyleCastExpr\n";
 
     needsType(clang_source_range(e->getSourceRange()),
               e->getTypeAsWritten().getTypePtrOrNull());
@@ -108,7 +98,7 @@ public:
 
   bool VisitCallExpr(CallExpr *e) {
     if (debugMode)
-      llvm::errs() << "  CallExpr\n";
+      llvm::errs() << "CallExpr\n";
 
     needsDecl(clang_source_range(e->getSourceRange()), e->getCalleeDecl());
 
@@ -117,7 +107,7 @@ public:
 
   bool VisitDeclRefExpr(DeclRefExpr *e) {
     if (debugMode)
-      llvm::errs() << "  VisitDeclRefExpr\n";
+      llvm::errs() << "VisitDeclRefExpr\n";
 
     needsDecl(clang_source_range(e->getSourceRange()), e->getDecl());
 
@@ -126,7 +116,7 @@ public:
 
   bool VisitFieldDecl(FieldDecl *D) {
     if (debugMode)
-      llvm::errs() << "  FieldDecl\n";
+      llvm::errs() << "FieldDecl\n";
 
     needsType(clang_source_range(D->getSourceRange()),
               D->getTypeSourceInfo()->getType().getTypePtrOrNull());
@@ -136,7 +126,7 @@ public:
 
   bool VisitVarDecl(VarDecl *D) {
     if (debugMode)
-      llvm::errs() << "  VarDecl\n";
+      llvm::errs() << "VarDecl\n";
 
     needsType(clang_source_range(D->getSourceRange()),
               D->getTypeSourceInfo()->getType().getTypePtrOrNull());
@@ -146,7 +136,7 @@ public:
 
   bool VisitParmVarDecl(ParmVarDecl *D) {
     if (debugMode)
-      llvm::errs() << "  ParmVarDecl\n";
+      llvm::errs() << "ParmVarDecl\n";
 
     needsType(clang_source_range(D->getSourceRange()),
               D->getOriginalType().getTypePtrOrNull());
@@ -154,6 +144,13 @@ public:
     return true;
   }
 };
+
+static const char *FileChangeReasonStrings[] = {
+    "EnterFile", "ExitFile", "SystemHeaderPragma", "RenameFile"};
+
+static const char *CharacteristicKindStrings[] = {
+    "C_User", "C_System", "C_ExternCSystem", "C_User_ModuleMap",
+    "C_System_ModuleMap"};
 
 class CarbonCollectPP : public PPCallbacks {
   CompilerInstance &CI;
@@ -169,21 +166,118 @@ public:
     return buffNm == "<built-in>" || buffNm == "<scratch space>";
   }
 
+
+  bool isSourceRangeSensible(const SourceRange& SR) {
+    pair<FileID, unsigned> beg = SM.getDecomposedExpansionLoc(SR.getBegin());
+    pair<FileID, unsigned> end = SM.getDecomposedExpansionLoc(SR.getEnd());
+
+    return beg.first == end.first && SM.getFileEntryForID(beg.first);
+  }
+
+  void FileChanged(SourceLocation Loc, FileChangeReason Reason,
+                   SrcMgr::CharacteristicKind FileType, FileID PrevFID) {
+
+    if (debugMode) {
+      FileID FID = SM.getDecomposedExpansionLoc(Loc).first;
+      bool isSys;
+
+      {
+        bool Invalid = false;
+        const SrcMgr::SLocEntry &SEntry = SM.getSLocEntry(FID, &Invalid);
+        isSys = !Invalid && SEntry.isFile() &&
+                SrcMgr::isSystem(SEntry.getFile().getFileCharacteristic());
+      }
+
+      const FileEntry *FE = SM.getFileEntryForID(FID);
+      if (FE) {
+        llvm::errs() << "FileChanged: ";
+        if (isSys)
+          llvm::errs() << FE->getName();
+        else
+          llvm::errs() << fs::relative(FE->getName().str(), root_src_dir).string();
+        llvm::errs() << " (" << FileChangeReasonStrings[Reason] << ")\n";
+      }
+    }
+
+#if 0
+    if (debugMode) {
+      const FileEntry *PrevFE = SM.getFileEntryForID(PrevFID);
+
+      llvm::errs() << "FileChanged:\n"
+                   << "  Loc : " << Loc.printToString(SM) << '\n'
+                   << "  Reason : " << FileChangeReasonStrings[Reason] << '\n'
+                   << "  FileType : " << CharacteristicKindStrings[FileType] << '\n'
+                   << "  PrevFID : "
+                   << ((PrevFE && PrevFE->isValid()) ?
+                       PrevFE->tryGetRealPathName() :
+                       "<invalid>") << '\n';
+    }
+#endif
+  }
+
+  void InclusionDirective(SourceLocation HashLoc, const Token &IncludeTok,
+                          StringRef FileName, bool IsAngled,
+                          CharSourceRange FilenameRange, const FileEntry *File,
+                          StringRef SearchPath, StringRef RelativePath,
+                          const Module *Imported) {
+    if (!IncludeTok.is(tok::identifier))
+      return;
+
+    if (IncludeTok.getIdentifierInfo()->getPPKeywordID() != tok::pp_include)
+      return;
+
+    if (debugMode) {
+      llvm::errs() << "InclusionDirective: \"" << FileName << "\" (";
+
+      FileID FID = SM.getDecomposedExpansionLoc(HashLoc).first;
+      bool isSys;
+
+      {
+        bool Invalid = false;
+        const SrcMgr::SLocEntry &SEntry = SM.getSLocEntry(FID, &Invalid);
+        isSys = !Invalid && SEntry.isFile() &&
+                SrcMgr::isSystem(SEntry.getFile().getFileCharacteristic());
+      }
+
+      const FileEntry *FE = SM.getFileEntryForID(FID);
+      if (FE) {
+        if (isSys)
+          llvm::errs() << FE->getName();
+        else
+          llvm::errs() << fs::relative(FE->getName().str(), root_src_dir).string();
+
+        llvm::errs() << ")\n";
+      }
+    }
+  }
+
   //
   // Hook called whenever a macro definition is seen.
   //
   void MacroDefined(const Token &MacroNameTok, const MacroDirective *MD) {
-    if (debugMode)
-      llvm::errs() << "MacroDefined "
-                   << MacroNameTok.getIdentifierInfo()->getName();
-
     const MacroInfo *MI = MD->getMacroInfo();
+    if (!MI)
+      return;
+
+    IdentifierInfo *II = MacroNameTok.getIdentifierInfo();
+    if (!II)
+      return;
+
     SourceRange SR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
 
-    if (!LocBacked(SR.getBegin())) {
-      if (debugMode)
-        llvm::errs() << '\n';
+    if (!isSourceRangeSensible(SR))
       return;
+
+    StringRef Nm = II->getName();
+
+    bool redefined = macro_defs.find(Nm.str()) != macro_defs.end();
+
+    if (debugMode) {
+      if (redefined)
+        llvm::errs() << "MacroRedefined ";
+      else
+        llvm::errs() << "MacroDefined ";
+      llvm::errs() << '\"' << Nm << '\"';
     }
 
     //
@@ -197,11 +291,10 @@ public:
                                            SM, CI.getLangOpts(), nullptr)
                           .size());
     src_rng.beg -= get_backwards_offset_to_new_line(src_rng);
+    c.code(src_rng);
 
     if (debugMode)
       llvm::errs() << ' ' << src_rng << '\n';
-
-    c.code(src_rng);
 
     //
     // if the macro here is being redefined, we need to make sure that all code
@@ -209,30 +302,21 @@ public:
     // redefinition to preserve the textual ordering when we perform a
     // topological sort of the dependency graph
     //
-    auto it =
-        macro_defs.find(MacroNameTok.getIdentifierInfo()->getName().str());
-    if (it != macro_defs.end() && !is_counterpart(src_rng, (*it).second)) {
-      if (debugMode) {
-        ostringstream buff;
-        buff << "MacroRedefined "
-             << MacroNameTok.getIdentifierInfo()->getName().str();
-        string s(buff.str());
-        string sp(s.size(), ' ');
+    if (redefined && !is_counterpart(src_rng, _macro_defs[Nm.str()])) {
+      auto it = macro_defs.find(Nm.str());
+      auto _it = _macro_defs.find(Nm.str());
 
-        llvm::errs()
-            << s
-            << _macro_defs[MacroNameTok.getIdentifierInfo()->getName().str()]
-                   .getBegin()
-                   .printToString(SM)
-            << '\n' << sp << SR.getBegin().printToString(SM) << '\n' << sp
-            << (*it).second << '\n' << sp << src_rng << '\n';
-      }
+      if (debugMode)
+        llvm::errs() << "  PrevDefLoc: "
+                     << (*it).second.getBegin().printToString(SM) << '\n'
+                     << "  PrevDefEndLoc: "
+                     << (*it).second.getEnd().printToString(SM) << '\n';
 
-      c.follow_users_of((*it).second, src_rng);
+      c.follow_users_of((*_it).second, src_rng);
     }
 
-    macro_defs[MacroNameTok.getIdentifierInfo()->getName().str()] = src_rng;
-    _macro_defs[MacroNameTok.getIdentifierInfo()->getName().str()] = SR;
+    macro_defs[Nm.str()] = SR;
+    _macro_defs[Nm.str()] = src_rng;
   }
 
   //
@@ -240,29 +324,37 @@ public:
   //
   void MacroExpands(const Token &MacroNameTok, const MacroDefinition &MD,
                     SourceRange userSR, const MacroArgs *Args) {
-    if (!LocBacked(userSR.getBegin()))
+    const MacroInfo *MI = MD.getMacroInfo();
+    if (!MI)
       return;
+
+    IdentifierInfo *II = MacroNameTok.getIdentifierInfo();
+    if (!II)
+      return;
+
+    if (!isSourceRangeSensible(userSR))
+      return;
+
+    SourceRange useeSR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
+    if (!isSourceRangeSensible(useeSR))
+      return;
+
+    StringRef Nm = II->getName();
+#if 0
+    if (debugMode)
+      llvm::errs() << "MacroExpands: " << Nm << '\n'
+                   << "  user: " << userSR.getBegin().printToString(SM) << '\n'
+                   << "  usee: " << useeSR.getBegin().printToString(SM) << '\n';
+#endif
 
     clang_source_range_t user(clang_source_range(userSR));
-
-    if (debugMode)
-      llvm::errs() << "MacroExpands "
-                   << MacroNameTok.getIdentifierInfo()->getName() << ' '
-                   << user;
-
-    const MacroInfo *MI = MD.getMacroInfo();
-    SourceRange useeSR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
-
-    if (!LocBacked(useeSR.getBegin())) {
-      if (debugMode)
-        llvm::errs() << '\n';
-      return;
-    }
-
     clang_source_range_t usee(clang_source_range(useeSR));
 
+#if 1
     if (debugMode)
-      llvm::errs() << " ---> " << usee << '\n';
+      llvm::errs() << "MacroExpands \"" << Nm << "\" " << user << " ---> "
+                   << usee << '\n';
+#endif
 
     c.use(user, usee);
   }
@@ -373,10 +465,11 @@ public:
 
         if (isa<NamedDecl>(D)) {
           NamedDecl *ND = cast<NamedDecl>(D);
-          llvm::errs() << ND->getName() << ' ';
+          if (!ND->getName().empty())
+            llvm::errs() << '\"' << ND->getName() << '\"';
         }
 
-        llvm::errs() << src_rng << '\n';
+        llvm::errs() << '\n';
       }
 
       //
@@ -539,135 +632,96 @@ public:
       return false;
     }
 
-    c.set_args(fs::canonical(fs::path(src.str())),
-               fs::canonical(args[0] /* src */),
-               fs::canonical(args[1] /* bin */));
+    root_src_dir = fs::canonical(args[0]);
+    root_bin_dir = fs::canonical(args[1]);
+
+    c.set_args(fs::canonical(fs::path(src.str())), root_src_dir, root_bin_dir);
 
     gl_SM = &CI.getSourceManager(); /* XXX */
     return true;
   }
 };
 
-struct file_entry_unique_id_hasher {
-  size_t operator()(const llvm::sys::fs::UniqueID& uid) const {
-    size_t res = 23;
-    res = res * 31 + uid.getDevice();
-    res = res * 31 + uid.getFile();
-    return res;
-  }
+struct MultipliersForFileIDs {
+  int Curr;
+  map<FileID, int> FIDMap;
+
+  MultipliersForFileIDs() : Curr(0) {}
 };
 
-struct file_id_hasher {
-  size_t operator()(const FileID& fid) const {
-    return fid.getHashValue();
-  }
-};
+/// Note: SM assigns unique FileID's for each unique \#include chain.
+static map<llvm::sys::fs::UniqueID, MultipliersForFileIDs> FileMultMap;
 
-static unordered_map<FileID, unsigned, file_id_hasher> src_rng_mult_map;
-static unordered_map<llvm::sys::fs::UniqueID, unsigned,
-                     file_entry_unique_id_hasher>
-    src_f_mult_map;
-
-bool is_counterpart(const clang_source_range_t &cl_src_rng,
-                    const clang_source_range_t &other_cl_src_rng) {
-  if (gl_SM->getFileEntryForID(cl_src_rng.f.priv->fid)->getUniqueID() !=
-      gl_SM->getFileEntryForID(other_cl_src_rng.f.priv->fid)->getUniqueID())
+bool is_counterpart(const clang_source_range_t &lhs,
+                    const clang_source_range_t &rhs) {
+  if ((lhs.end - lhs.beg) != (rhs.end - rhs.beg))
     return false;
 
-  if ((cl_src_rng.end - cl_src_rng.beg) !=
-      (other_cl_src_rng.end - other_cl_src_rng.beg))
+  SourceManager &SM = *gl_SM;
+
+  if (SM.getFileEntryForID(lhs.f)->getUniqueID() !=
+      SM.getFileEntryForID(rhs.f)->getUniqueID())
     return false;
 
-  llvm::StringRef MB = gl_SM->getBufferData(cl_src_rng.f.priv->fid);
-  return cl_src_rng.beg % static_cast<long>(MB.size()) ==
-         other_cl_src_rng.beg % static_cast<long>(MB.size());
+  StringRef MB = SM.getBufferData(lhs.f);
+  return lhs.beg % static_cast<int>(MB.size()) ==
+         rhs.beg % static_cast<int>(MB.size());
 }
 
 clang_source_range_t
 normalize_source_range(const clang_source_range_t &cl_src_rng) {
-  int n = cl_src_rng.end - cl_src_rng.beg;
-  llvm::StringRef MB = gl_SM->getBufferData(cl_src_rng.f.priv->fid);
-  int beg = cl_src_rng.beg % static_cast<long>(MB.size());
+  SourceManager &SM = *gl_SM;
 
-  return {cl_src_rng.f, beg, beg + n};
+  int beg =
+      cl_src_rng.beg % static_cast<int>(SM.getBufferData(cl_src_rng.f).size());
+  return {cl_src_rng.f, beg, beg + (cl_src_rng.end - cl_src_rng.beg)};
 }
 
 clang_source_range_t clang_source_range(const SourceRange &SR) {
-  assert(SR.getBegin().isValid());
-  assert(SR.getEnd().isValid());
+  SourceManager &SM = *gl_SM;
 
-  auto begSR = SR.getBegin();
-  auto endSR = SR.getEnd();
+  FileID FID;
+  int beg, end;
+  {
+    pair<FileID, unsigned> begInfo = SM.getDecomposedExpansionLoc(SR.getBegin());
+    pair<FileID, unsigned> endInfo = SM.getDecomposedExpansionLoc(SR.getEnd());
 
-  pair<FileID, unsigned> beginInfo = gl_SM->getDecomposedExpansionLoc(begSR);
-  pair<FileID, unsigned> endInfo = gl_SM->getDecomposedExpansionLoc(endSR);
+    if (begInfo.first != endInfo.first)
+      abort();
 
-  assert(beginInfo.first == endInfo.first);
+    FID = begInfo.first;
 
-  FileID fid = beginInfo.first;
-  llvm::StringRef MB = gl_SM->getBufferData(fid);
-
-  unsigned mult;
-  auto it = src_rng_mult_map.find(fid);
-  if (it != src_rng_mult_map.end()) {
-    mult = (*it).second;
-  } else {
-    const FileEntry *FE = gl_SM->getFileEntryForID(fid);
-    if (FE) {
-      auto currmul_it = src_f_mult_map.find(FE->getUniqueID());
-      if (currmul_it == src_f_mult_map.end())
-        currmul_it = src_f_mult_map.insert({FE->getUniqueID(), 0}).first;
-
-      unsigned &currmult = (*currmul_it).second;
-
-      src_rng_mult_map[fid] = currmult;
-      mult = currmult++;
-    } else {
-      mult = 1;
-    }
+    beg = static_cast<int>(begInfo.second);
+    end = static_cast<int>(endInfo.second) + 1;
   }
 
-  int beg = static_cast<int>(beginInfo.second);
-  int end = static_cast<int>(endInfo.second) + 1;
+  MultipliersForFileIDs &Mults =
+      FileMultMap[SM.getFileEntryForID(FID)->getUniqueID()];
 
-  size_t n = MB.size();
+  if (Mults.FIDMap.find(FID) == Mults.FIDMap.end())
+    Mults.FIDMap[FID] = Mults.Curr++;
 
-  beg += n*mult;
-  end += n*mult;
+  int M = Mults.FIDMap[FID];
+  int N = static_cast<int>(SM.getBufferData(FID).size());
 
-  return {clang_source_file(beginInfo.first), beg, end};
+  beg += M * N;
+  end += M * N;
+
+  return {FID, beg, end};
 }
 
 clang_source_file_t clang_source_file(FileID fid) {
-  clang_source_file_t res;
-  res.priv.reset(new clang_source_file_priv_t(fid));
-  return res;
-}
-
-clang_source_file_t::clang_source_file_t() : priv(nullptr) {}
-
-clang_source_file_t::clang_source_file_t(const clang_source_file_t &other)
-    : priv(new clang_source_file_priv_t(other.priv->fid)) {}
-
-clang_source_file_t::~clang_source_file_t() {}
-
-clang_source_file_t &clang_source_file_t::
-operator=(const clang_source_file_t &rhs) {
-  priv.reset(new clang_source_file_priv_t(rhs.priv->fid));
-
-  return *this;
-}
-
-bool clang_source_file_t::operator==(const clang_source_file_t &rhs) const {
-  return priv->fid == rhs.priv->fid;
+  return fid;
 }
 
 size_t hash_of_clang_source_file(const clang_source_file_t &f) {
-  return f.priv->fid.getHashValue();
+  return f.getHashValue();
 }
 
 fs::path path_of_clang_source_file(const clang_source_file_t &f) {
-  const FileEntry *FE = gl_SM->getFileEntryForID(f.priv->fid);
+  SourceManager &SM = *gl_SM;
+
+  const FileEntry *FE = SM.getFileEntryForID(f);
   if (!FE)
     return fs::path();
 
@@ -675,61 +729,60 @@ fs::path path_of_clang_source_file(const clang_source_file_t &f) {
   return fs::canonical(p);
 }
 
-string source_of_clang_source_range(const clang_source_range_t &cl_src_rng) {
-  llvm::StringRef MB = gl_SM->getBufferData(cl_src_rng.f.priv->fid);
-  return MB
-      .substr(static_cast<size_t>(cl_src_rng.beg) % MB.size(),
-              static_cast<size_t>(cl_src_rng.end - cl_src_rng.beg))
-      .str();
-}
-
 bool clang_is_system_source_file(const clang_source_file_t &f) {
-  bool Invalid = false;
-  const SrcMgr::SLocEntry &SEntry = gl_SM->getSLocEntry(f.priv->fid, &Invalid);
-  if (Invalid || !SEntry.isFile())
-    return false;
+  SourceManager &SM = *gl_SM;
 
-  return SEntry.getFile().getFileCharacteristic() != SrcMgr::C_User;
+  bool Invalid = false;
+  const SrcMgr::SLocEntry &SEntry = SM.getSLocEntry(f, &Invalid);
+  return !Invalid && SEntry.isFile() &&
+         SrcMgr::isSystem(SEntry.getFile().getFileCharacteristic());
 }
 
 unsigned
 get_backwards_offset_to_new_line(const clang_source_range_t &cl_src_rng) {
-  llvm::StringRef MB = gl_SM->getBufferData(cl_src_rng.f.priv->fid);
-  unsigned beg = static_cast<unsigned>(cl_src_rng.beg) % MB.size();
+  SourceManager &SM = *gl_SM;
+
+  int beg =
+      cl_src_rng.beg % static_cast<int>(SM.getBufferData(cl_src_rng.f).size());
 
   char ch;
-  unsigned pos = beg;
+  int pos = beg;
   do {
     --pos;
     ch = character_at_clang_file_offset(
         cl_src_rng.f, static_cast<clang_source_location_t>(pos));
   } while (ch != '\r' && ch != '\n' && pos > 0);
 
-  return beg - pos - 1;
+  return static_cast<unsigned>(beg - pos - 1);
 }
 
 unsigned
 get_forwards_offset_to_new_line(const clang_source_range_t &cl_src_rng) {
-  llvm::StringRef MB = gl_SM->getBufferData(cl_src_rng.f.priv->fid);
-  unsigned len = static_cast<unsigned>(cl_src_rng.end - cl_src_rng.beg);
-  unsigned beg = static_cast<unsigned>(cl_src_rng.beg) % MB.size();
-  unsigned end = beg + len;
+  SourceManager &SM = *gl_SM;
+
+  int len = cl_src_rng.end - cl_src_rng.beg;
+  int beg =
+      cl_src_rng.beg % static_cast<int>(SM.getBufferData(cl_src_rng.f).size());
+  int end = beg + len;
 
   char ch;
-  unsigned pos = end;
+  int pos = end;
   do {
     ch = character_at_clang_file_offset(
         cl_src_rng.f, static_cast<clang_source_location_t>(pos++));
   } while (ch != '\r' && ch != '\n' && ch != '\0');
 
-  return pos - end - 1;
+  return static_cast<unsigned>(pos - end - 1);
 }
 
 unsigned char_count_until_semicolon(const clang_source_range_t &cl_src_rng) {
-  llvm::StringRef MB = gl_SM->getBufferData(cl_src_rng.f.priv->fid);
-  unsigned len = static_cast<unsigned>(cl_src_rng.end - cl_src_rng.beg);
-  unsigned beg = static_cast<unsigned>(cl_src_rng.beg) % MB.size();
-  unsigned end = beg + len;
+  SourceManager &SM = *gl_SM;
+
+  StringRef MB = SM.getBufferData(cl_src_rng.f);
+
+  int len = cl_src_rng.end - cl_src_rng.beg;
+  int beg = cl_src_rng.beg % static_cast<int>(MB.size());
+  int end = beg + len;
 
   char ch;
   unsigned cnt = 0;
@@ -747,22 +800,25 @@ unsigned char_count_until_semicolon(const clang_source_range_t &cl_src_rng) {
 
 char character_at_clang_file_offset(const clang_source_file_t &f,
                                     const clang_source_location_t &off) {
-  llvm::StringRef MB = gl_SM->getBufferData(f.priv->fid);
-  return MB[static_cast<unsigned>(off)];
+  SourceManager &SM = *gl_SM;
+
+  return SM.getBufferData(f)[static_cast<unsigned>(off)];
 }
 
 clang_source_file_t top_level_system_header(const clang_source_file_t &f) {
+  SourceManager &SM = *gl_SM;
+
   bool invalid = false;
-  const SrcMgr::SLocEntry &sloc = gl_SM->getSLocEntry(f.priv->fid, &invalid);
+  const SrcMgr::SLocEntry &sloc = SM.getSLocEntry(f, &invalid);
   assert(!invalid && sloc.isFile());
 
   const SrcMgr::FileInfo &fileInfo = sloc.getFile();
   assert(!fileInfo.getIncludeLoc().isInvalid());
 
-  FileID incFid = gl_SM->getFileID(fileInfo.getIncludeLoc());
+  FileID incFid = SM.getFileID(fileInfo.getIncludeLoc());
   assert(!incFid.isInvalid());
 
-  const SrcMgr::SLocEntry &incSloc = gl_SM->getSLocEntry(incFid, &invalid);
+  const SrcMgr::SLocEntry &incSloc = SM.getSLocEntry(incFid, &invalid);
   assert(!invalid && incSloc.isFile());
 
   if (incSloc.getFile().getFileCharacteristic() == SrcMgr::C_User)
@@ -776,6 +832,7 @@ clang_source_file_t top_level_system_header(const clang_source_file_t &f) {
   return top_level_system_header(clang_source_file(incFid));
 }
 
+#if 0
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
                               const clang_source_file_t &f) {
   fs::path srcfp(path_of_clang_source_file(f));
@@ -785,30 +842,68 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
   else
     return os << fs::relative(srcfp, root_src_dir).string();
 }
+#endif
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
                               const clang_source_range_t &cl_src_rng) {
-  llvm::StringRef MB = gl_SM->getBufferData(cl_src_rng.f.priv->fid);
-  unsigned len = static_cast<unsigned>(cl_src_rng.end - cl_src_rng.beg);
-  unsigned beg = static_cast<unsigned>(cl_src_rng.beg) % MB.size();
-  unsigned end = beg + len;
+  SourceManager &SM = *gl_SM;
 
-  return os << (clang_is_system_source_file(cl_src_rng.f) ? "*" : "") << "['"
-            << cl_src_rng.f << "' " << cl_src_rng.beg << ':' << cl_src_rng.end
-            << ' ' << beg << ':' << end << ']';
+  int beg = cl_src_rng.beg;
+  int end = cl_src_rng.end;
+
+  int N = static_cast<int>(SM.getBufferData(cl_src_rng.f).size());
+
+  bool normalized = false;
+  if (beg > N) {
+    normalized = true;
+
+    int len = cl_src_rng.end - cl_src_rng.beg;
+    beg = beg % N;
+    end = beg + len;
+  }
+
+  const FileEntry *FE = SM.getFileEntryForID(cl_src_rng.f);
+
+  os << '[';
+
+  if (clang_is_system_source_file(cl_src_rng.f)) {
+    os << FE->getName();
+  } else {
+    os << fs::relative(FE->getName().str(), root_src_dir).string();
+  }
+
+  os << ' ';
+
+  if (normalized)
+    os << '#' << ' ';
+
+  os << beg << ':' << end;
+  os << ']';
+
+  return os;
+}
+
+static bool _isSourceRangeSensible(const SourceRange &SR) {
+  SourceManager &SM = *gl_SM;
+
+  pair<FileID, unsigned> beg = SM.getDecomposedExpansionLoc(SR.getBegin());
+  pair<FileID, unsigned> end = SM.getDecomposedExpansionLoc(SR.getEnd());
+
+  return beg.first == end.first && SM.getFileEntryForID(beg.first);
 }
 
 static void needsDecl(const clang_source_range_t &user, const Decl *D) {
-  if (!D || D->getLocStart().isInvalid() || isInBuiltin(D->getLocStart()))
+  if (!D || !_isSourceRangeSensible(D->getSourceRange()))
     return;
 
   clang_source_range_t usee(clang_source_range(D->getSourceRange()));
 
   if (debugMode) {
-    llvm::errs() << user << " ---> ";
+    llvm::errs() << "  " << user << " ---> ";
     if (isa<NamedDecl>(D)) {
       const NamedDecl *ND = cast<const NamedDecl>(D);
-      llvm::errs() << '\'' << ND->getName() << '\'' << ' ';
+      if (!ND->getName().empty())
+        llvm::errs() << '\"' << ND->getName() << '\"' << ' ';
     }
     llvm::errs() << usee << '\n';
   }
@@ -882,6 +977,9 @@ static void needsTypedefType(const clang_source_range_t &user,
 }
 
 static void needsType(const clang_source_range_t& user, const Type* T) {
+  assert(T);
+
+#if 0
   if (!T) {
     llvm::errs() << "warning: NOTYDCL <" << T->getTypeClassName() << "> "
                  << user << '\n';
@@ -890,6 +988,7 @@ static void needsType(const clang_source_range_t& user, const Type* T) {
 
   if (debugMode)
     llvm::errs() << T->getTypeClassName() << ' ';
+#endif
 
   switch (T->getTypeClass()) {
 #define TYPE(Class)                                                            \

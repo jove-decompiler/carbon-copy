@@ -46,12 +46,6 @@ int main(int argc, char **argv) {
   //
   depends_t g;
   link(g, clc_files);
-
-  cerr << "hdr dirs:" << endl;
-  for (const string& dir : g[boost::graph_bundle].include.dirs) {
-    cerr << "-I " << dir << endl;
-  }
-
   code_reader c_reader(g);
 
   //

@@ -5,6 +5,7 @@
 #include <list>
 #include <set>
 #include <boost/filesystem.hpp>
+#include <clang/Basic/SourceLocation.h>
 
 namespace carbon {
 
@@ -12,18 +13,7 @@ namespace carbon {
 typedef int32_t clang_source_location_t;
 
 // opaque structure uniquely identifying a file in clang
-struct clang_source_file_priv_t;
-struct clang_source_file_t {
-  std::unique_ptr<clang_source_file_priv_t> priv;
-
-  clang_source_file_t();
-  clang_source_file_t(const clang_source_file_t &);
-  ~clang_source_file_t();
-
-  clang_source_file_t &operator=(const clang_source_file_t &rhs);
-
-  bool operator==(const clang_source_file_t &rhs) const;
-};
+typedef clang::FileID clang_source_file_t;
 
 // defined in clang_collect.cpp
 std::size_t hash_of_clang_source_file(const clang_source_file_t &);
@@ -43,7 +33,6 @@ struct clang_source_range_t {
 // defined in carbon_collect.cpp
 char character_at_clang_file_offset(const clang_source_file_t &f,
                                     const clang_source_location_t &o);
-std::string source_of_clang_source_range(const clang_source_range_t &);
 unsigned get_backwards_offset_to_new_line(const clang_source_range_t &);
 unsigned get_forwards_offset_to_new_line(const clang_source_range_t &);
 unsigned char_count_until_semicolon(const clang_source_range_t &cl_src_rng);
