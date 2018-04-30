@@ -13,6 +13,7 @@
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/program_options.hpp>
 #include <boost/format.hpp>
+#include "read_collection.h"
 
 using namespace std;
 using namespace carbon;
@@ -270,8 +271,29 @@ parse_command_line_arguments(int argc, char **argv) {
   for (const string& s : code_args) {
     string::size_type colpos = s.find(':');
 
+    // if does not contain colon, it must be a global symbol
     if (colpos == string::npos) {
-      gsl.push_back(s); // treat as global symbol
+      gsl.push_back(s);
+
+      // find source file where global is defined.
+      fs::recursive_directory_iterator end_iter;
+      for (fs::recursive_directory_iterator dir_itr(carbon_dir);
+           dir_itr != end_iter; ++dir_itr) {
+        if (!fs::is_regular_file(dir_itr->status()))
+          continue;
+
+        fs::path carb_path = fs::canonical(dir_itr->path());
+        depends_t dep;
+        read_collection_file(dep, carb_path);
+        if (dep[boost::graph_bundle].glbl_defs.find(s) !=
+            dep[boost::graph_bundle].glbl_defs.end()) {
+          cerr << "found " << s << " in "
+               << carb_path.filename().stem().string() << endl;
+          cfl.second.insert(carb_path);
+          break;
+        }
+      }
+
       continue;
     }
 

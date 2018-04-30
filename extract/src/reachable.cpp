@@ -94,12 +94,6 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const depends_t &g,
     unsigned off;
     tie(path, off) = cl;
 
-    cerr << "WHAT THE FUCK" << endl;
-    cout << "WHAT THE FUCK" << endl;
-
-    cerr << "cl: {.path = \"" << path << "\" .off = " << dec << off << "}"
-         << endl;
-
     auto f_idx_it = user_f_idx_map.find(path);
     if (f_idx_it == user_f_idx_map.end()) {
       cerr << "source file '" << path
