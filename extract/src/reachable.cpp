@@ -94,6 +94,12 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const depends_t &g,
     unsigned off;
     tie(path, off) = cl;
 
+    cerr << "WHAT THE FUCK" << endl;
+    cout << "WHAT THE FUCK" << endl;
+
+    cerr << "cl: {.path = \"" << path << "\" .off = " << dec << off << "}"
+         << endl;
+
     auto f_idx_it = user_f_idx_map.find(path);
     if (f_idx_it == user_f_idx_map.end()) {
       cerr << "source file '" << path
@@ -132,18 +138,30 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const depends_t &g,
   //
   for (const string &gs : gsl) {
     auto gl_it = g[boost::graph_bundle].glbl_defs.find(gs);
-    if (gl_it != g[boost::graph_bundle].glbl_defs.end()) {
-      source_range_t src_rng;
-      for (boost::icl::interval_map<source_location_t, set<depends_vertex_t>>
-               &v_map : user_src_rng_vert_map) {
-        boost::icl::discrete_interval<source_location_t> intervl =
-            boost::icl::discrete_interval<source_location_t>::right_open(
-                src_rng.beg, src_rng.end);
-        auto v_it = v_map.find(intervl);
-        if (v_it != v_map.end())
-          verts.insert(*(*v_it).second.begin());
-      }
+    if (gl_it == g[boost::graph_bundle].glbl_defs.end()) {
+      cerr << "symbol " << gs << " not found (skipping) " << endl;
+      continue;
     }
+
+    const full_source_location_t &sl = (*gl_it).second;
+
+    auto &def_sr_map =
+        is_system_source_file(sl.f)
+            ? syst_src_rng_vert_map[index_of_source_file(sl.f)]
+            : user_src_rng_vert_map[index_of_source_file(sl.f)];
+    auto def_vert_it = def_sr_map.find(sl.beg);
+    if (def_vert_it == def_sr_map.end()) {
+      cerr << "source range for symbol " << gs << " not found (skipping) "
+           << endl;
+      continue;
+    }
+
+    verts.insert(*(*def_vert_it).second.begin());
+  }
+
+  if (verts.empty()) {
+    cerr << "failed to extract code" << endl;
+    exit(1);
   }
 
   //

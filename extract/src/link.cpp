@@ -326,14 +326,14 @@ void link_into(
   // add globals from given graph to destination graph
   //
   for (auto &entry : from[boost::graph_bundle].glbl_defs) {
-#if 0
+#if 1
     auto into_it = into[boost::graph_bundle].glbl_defs.find(entry.first);
     if (into_it != into[boost::graph_bundle].glbl_defs.end()) {
 #if 0
       cerr << "warning: multiple definitions found for '" << entry.first << '\''
            << endl;
 #else
-           continue;
+      continue;
 #endif
     }
 #endif
@@ -352,7 +352,7 @@ void link_into(
          << std::endl;
 #endif
 
-    into[boost::graph_bundle].glbl_defs[entry.first] = entry.second;
+    into[boost::graph_bundle].glbl_defs.insert(entry);
   }
 
   for (auto &entry : from[boost::graph_bundle].glbl_decls) {
