@@ -86,6 +86,19 @@ public:
     return true;
   }
 
+  bool VisitUnaryExprOrTypeTraitExpr(UnaryExprOrTypeTraitExpr *e) {
+    if (e->getKind() != UETT_SizeOf) /* sizeof(type) */
+      return true;
+
+    if (debugMode)
+      llvm::errs() << "UnaryExprOrTypeTraitExpr\n";
+
+    needsType(clang_source_range(e->getSourceRange()),
+              e->getTypeOfArgument().getTypePtrOrNull());
+
+    return true;
+  }
+
   bool VisitCStyleCastExpr(CStyleCastExpr *e) {
     if (debugMode)
       llvm::errs() << "CStyleCastExpr\n";
@@ -148,9 +161,11 @@ public:
 static const char *FileChangeReasonStrings[] = {
     "EnterFile", "ExitFile", "SystemHeaderPragma", "RenameFile"};
 
+#if 0
 static const char *CharacteristicKindStrings[] = {
     "C_User", "C_System", "C_ExternCSystem", "C_User_ModuleMap",
     "C_System_ModuleMap"};
+#endif
 
 class CarbonCollectPP : public PPCallbacks {
   CompilerInstance &CI;
