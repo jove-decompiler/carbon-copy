@@ -230,11 +230,16 @@ public:
 #endif
   }
 
-  void InclusionDirective(SourceLocation HashLoc, const Token &IncludeTok,
-                          StringRef FileName, bool IsAngled,
-                          CharSourceRange FilenameRange, const FileEntry *File,
-                          StringRef SearchPath, StringRef RelativePath,
-                          const Module *Imported) {
+  void InclusionDirective(SourceLocation HashLoc,
+                          const Token &IncludeTok,
+                          StringRef FileName,
+                          bool IsAngled,
+                          CharSourceRange FilenameRange,
+                          const FileEntry *File,
+                          StringRef SearchPath,
+                          StringRef RelativePath,
+                          const Module *Imported,
+                          SrcMgr::CharacteristicKind FileType) {
     if (!IncludeTok.is(tok::identifier))
       return;
 
