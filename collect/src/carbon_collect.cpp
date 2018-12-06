@@ -471,6 +471,9 @@ public:
     for (DeclGroupRef::iterator b = DR.begin(), e = DR.end(); b != e; ++b) {
       Decl *D = *b;
 
+      if (D->getKind() == Decl::Empty)
+        continue;
+
       clang_source_range_t src_rng = sourceRangeOfTopLevelDecl(D);
 
       //
