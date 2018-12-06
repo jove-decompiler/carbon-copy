@@ -455,7 +455,8 @@ public:
   }
 
   clang_source_range_t sourceRangeOfTopLevelDecl(Decl *D) {
-    if (!(isa<FunctionDecl>(D) && cast<FunctionDecl>(D)->doesThisDeclarationHaveABody())) {
+    if (!(isa<FunctionDecl>(D) &&
+          cast<FunctionDecl>(D)->doesThisDeclarationHaveABody())) {
       SourceLocation semiEnd =
           findSemiAfterLocation(D->getLocEnd(), D->getASTContext(), true);
       if (semiEnd.isValid()) {
@@ -469,9 +470,6 @@ public:
   bool HandleTopLevelDecl(DeclGroupRef DR) {
     for (DeclGroupRef::iterator b = DR.begin(), e = DR.end(); b != e; ++b) {
       Decl *D = *b;
-
-      if (isInBuiltin(D->getLocStart()) || D->getKind() == Decl::Empty)
-        return true;
 
       clang_source_range_t src_rng = sourceRangeOfTopLevelDecl(D);
 
