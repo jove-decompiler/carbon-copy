@@ -458,9 +458,9 @@ public:
     if (!(isa<FunctionDecl>(D) &&
           cast<FunctionDecl>(D)->doesThisDeclarationHaveABody())) {
       SourceLocation semiEnd =
-          findSemiAfterLocation(D->getLocEnd(), D->getASTContext(), true);
+          findSemiAfterLocation(D->getEndLoc(), D->getASTContext(), true);
       if (semiEnd.isValid()) {
-        return clang_source_range(SourceRange(D->getLocStart(), semiEnd));
+        return clang_source_range(SourceRange(D->getBeginLoc(), semiEnd));
       }
     }
 
@@ -632,7 +632,7 @@ public:
     {
       const LangOptions &LO = CI.getLangOpts();
       bool is_c = !LO.CPlusPlus && !LO.CPlusPlus11 && !LO.CPlusPlus14 &&
-                  !LO.CPlusPlus17 && !LO.CPlusPlus2a && !LO.ObjC1 && !LO.ObjC2;
+                  !LO.CPlusPlus17 && !LO.CPlusPlus2a && !LO.ObjC;
       if (!is_c) {
         llvm::outs() << "collect: skipping " << src << '\n';
         return false;
