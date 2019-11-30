@@ -3,6 +3,16 @@
 #include <clang/AST/ASTContext.h>
 #include <string>
 
+//
+// NOTE: this function has been observed to trigger a stack overflow when the
+// source location is musl/src/errno/strerror.c:12 (this is what the code looks
+// like:)
+//
+// static const char errmsg[] =
+// #include "__strerror.h"
+// ;
+//
+
 namespace carbon {
 
 /// Loc is the end of a statement range. This returns the location
