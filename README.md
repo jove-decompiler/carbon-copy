@@ -1,5 +1,5 @@
 # clang-extricate
-Extricate C code into single source file
+C code extractor from CodeCarbonCopy
 
 # Usage
 When compiling,
