@@ -1,5 +1,5 @@
 # clang-extricate
-Extricate C code into single source file
+C code extractor from CodeCarbonCopy, used with jove.
 
 # Usage
 When compiling,
