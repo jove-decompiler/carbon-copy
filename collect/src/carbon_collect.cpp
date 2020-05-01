@@ -451,7 +451,7 @@ class CarbonCollectConsumer : public ASTConsumer {
 public:
   CarbonCollectConsumer(CompilerInstance &CI)
       : SM(CI.getSourceManager()), Visitor(CI) {
-    CI.getPreprocessor().addPPCallbacks(llvm::make_unique<CarbonCollectPP>(CI));
+    CI.getPreprocessor().addPPCallbacks(std::make_unique<CarbonCollectPP>(CI));
   }
 
   clang_source_range_t sourceRangeOfTopLevelDecl(Decl *D) {
@@ -618,7 +618,7 @@ public:
       llvm::errs() << "  " << d << '\n';
 #endif
 
-    return llvm::make_unique<CarbonCollectConsumer>(CI);
+    return std::make_unique<CarbonCollectConsumer>(CI);
   }
 
   bool ParseArgs(const CompilerInstance &CI,
