@@ -39,3 +39,7 @@ Allowed options:
   -g [ --graphviz ]                     output graphviz file
   -s [ --sys-code ]                     inline code from system header files
 ```
+e.g.
+```
+carbon-extract tcg/tcg-op.c:1243l
+```
