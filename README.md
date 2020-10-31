@@ -64,8 +64,12 @@ index 7280fc69f039..fe6c2c729d1e 100644
 ```
 Then run the usual
 ```bash
-cd linux
 make CC=clang x86_64_defconfig
 rm -rf .carbon
 make CC=clang all -j$(nproc)
+```
+Afterwards,
+```bash
+cd linux
+carbon-extract sys_write
 ```
