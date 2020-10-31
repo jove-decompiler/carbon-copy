@@ -40,6 +40,32 @@ Allowed options:
   -s [ --sys-code ]                     inline code from system header files
 ```
 e.g.
-```
+```bash
 carbon-extract tcg/tcg-op.c:1243l
+```
+
+# Examples
+
+## linux kernel
+Make the following changes
+```diff
+diff --git a/Makefile b/Makefile
+index 7280fc69f039..fe6c2c729d1e 100644
+--- a/Makefile
++++ b/Makefile
+@@ -530,6 +530,7 @@ CLANG_FLAGS += --gcc-toolchain=$(GCC_TOOLCHAIN)
+ endif
+ CLANG_FLAGS    += -no-integrated-as
+ CLANG_FLAGS    += -Werror=unknown-warning-option
++CLANG_FLAGS     += -Xclang -load -Xclang /usr/local/lib/carbon-collect.so -Xclang -add-plugin -Xclang carbon-collect -Xclang -plugin-arg-carbon-collect -Xclang /home/aeden/linux -Xclang -plugin-arg-carbon-collect -Xclang /home/aeden/linux
+ KBUILD_CFLAGS  += $(CLANG_FLAGS)
+ KBUILD_AFLAGS  += $(CLANG_FLAGS)
+ export CLANG_FLAGS
+```
+Then run the usual
+```bash
+cd linux
+make CC=clang x86_64_defconfig
+rm -rf .carbon
+make CC=clang all -j$(nproc)
 ```
