@@ -1,6 +1,7 @@
 #include "utilities_clang.h"
 #include <clang/Lex/Lexer.h>
 #include <sstream>
+#include <clang/Basic/SourceManager.h>
 
 using namespace clang;
 using namespace std;

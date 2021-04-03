@@ -9,6 +9,7 @@
 #include <clang/Frontend/FrontendPluginRegistry.h>
 #include <clang/Lex/Preprocessor.h>
 #include <clang/Lex/PreprocessorOptions.h>
+#include <clang/Basic/FileManager.h>
 
 using namespace clang;
 using namespace std;
@@ -51,7 +52,7 @@ normalize_source_range(const clang_source_range_t &);
 static void needsDecl(const clang_source_range_t &user, const Decl *D);
 static void needsType(const clang_source_range_t& user_src_rng, const Type* T);
 static bool isInBuiltin(SourceLocation Loc) {
-  string buffNm = gl_SM->getBufferName(gl_SM->getSpellingLoc(Loc));
+  auto buffNm = gl_SM->getBufferName(gl_SM->getSpellingLoc(Loc));
   return buffNm == "<built-in>" || buffNm == "<scratch space>";
 }
 
@@ -62,7 +63,7 @@ public:
   CarbonCollectVisitor(CompilerInstance &CI) : SM(CI.getSourceManager()) {}
 
   bool isInBuiltin(SourceLocation Loc) {
-    string buffNm = SM.getBufferName(SM.getSpellingLoc(Loc));
+    auto buffNm = SM.getBufferName(SM.getSpellingLoc(Loc));
     return buffNm == "<built-in>" || buffNm == "<scratch space>";
   }
 
@@ -177,7 +178,7 @@ public:
 
   // \brief Return true if \c Loc is a location in a built-in macro.
   bool isInBuiltin(SourceLocation Loc) {
-    string buffNm = SM.getBufferName(SM.getSpellingLoc(Loc));
+    auto buffNm = SM.getBufferName(SM.getSpellingLoc(Loc));
     return buffNm == "<built-in>" || buffNm == "<scratch space>";
   }
 
@@ -503,9 +504,9 @@ public:
         //
 
         if (cast<FunctionDecl>(D)->getStorageClass() == SC_Static)
-          c.static_code(src_rng, FD->getName(), FD->hasBody());
+          c.static_code(src_rng, FD->getName().str(), FD->hasBody());
         else
-          c.global_code(src_rng, FD->getName(), FD->hasBody());
+          c.global_code(src_rng, FD->getName().str(), FD->hasBody());
 
         // 
         // examine return type
@@ -517,7 +518,7 @@ public:
         //
 
         VarDecl *VD = cast<VarDecl>(D);
-        c.global_code(src_rng, VD->getName(), !VD->hasExternalStorage());
+        c.global_code(src_rng, VD->getName().str(), !VD->hasExternalStorage());
       } else if (isa<TypedefDecl>(D)) {
         //
         // examine type being typedef'd
@@ -632,7 +633,7 @@ public:
     {
       const LangOptions &LO = CI.getLangOpts();
       bool is_c = !LO.CPlusPlus && !LO.CPlusPlus11 && !LO.CPlusPlus14 &&
-                  !LO.CPlusPlus17 && !LO.CPlusPlus2a && !LO.ObjC;
+                  !LO.CPlusPlus17 && !LO.CPlusPlus20 && !LO.ObjC;
       if (!is_c) {
         llvm::outs() << "collect: skipping " << src << '\n';
         return false;
@@ -746,7 +747,7 @@ fs::path path_of_clang_source_file(const clang_source_file_t &f) {
   if (!FE)
     return fs::path();
 
-  fs::path p(FE->getName());
+  fs::path p(FE->getName().str());
   return fs::canonical(p);
 }
 
