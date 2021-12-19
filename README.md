@@ -1,9 +1,7 @@
-# Description
-> To preserve the source-level structure and promote readability, CCC transfers all code verbatim (i.e., it does not preprocess the transferred code). Starting with the identified function to transfer, the code extractor (transitively) traces out compile- and run-time dependences to build a compile-time dependence graph. The nodes in this graph are code elements (type declarations, function declarations, and potentially invoked functions). The edges model compile-time dependences — there is an edge between two code elements if the compiler must process the first code element before the second for the second to compile successfully. The extractor topologically sorts this graph and, with the exception of system code elements from standard include files or system libraries, emits the code elements in the topological sort order. Instead of emitting code elements from standard include files, it emits code that includes the include file. It expects code from system libraries to be linked into the final executable.
+### Description
+CodeCarbonCopy ([paper](https://people.csail.mit.edu/stelios/papers/codecarboncopy.pdf)) transfers all code verbatim (i.e., it does not preprocess the transferred code). Starting with the identified function to transfer, the code extractor (transitively) traces out compile- and run-time dependences to build a compile-time dependence graph. The nodes in this graph are code elements (type declarations, function declarations, and potentially invoked functions). The edges model compile-time dependences — there is an edge between two code elements if the compiler must process the first code element before the second for the second to compile successfully. The extractor topologically sorts this graph and, with the exception of system code elements from standard include files or system libraries, emits the code elements in the topological sort order. Instead of emitting code elements from standard include files, it emits code that includes the include file. It expects code from system libraries to be linked into the final executable.
 
-[CCC paper](https://people.csail.mit.edu/stelios/papers/codecarboncopy.pdf)
-
-# Usage
+### Usage
 When compiling,
 
 ```bash
@@ -46,9 +44,9 @@ e.g.
 carbon-extract tcg/tcg-op.c:1243l
 ```
 
-# Examples
+### Examples
 
-## linux kernel
+#### linux
 Make the following changes
 ```diff
 diff --git a/Makefile b/Makefile
