@@ -10,6 +10,7 @@
 #include <clang/Lex/Preprocessor.h>
 #include <clang/Lex/PreprocessorOptions.h>
 #include <clang/Basic/FileManager.h>
+#include <llvm/Support/FormatVariadic.h>
 
 using namespace clang;
 using namespace std;
@@ -631,11 +632,11 @@ public:
     // we only process C code
     //
     {
-      const LangOptions &LO = CI.getLangOpts();
-      bool is_c = !LO.CPlusPlus && !LO.CPlusPlus11 && !LO.CPlusPlus14 &&
-                  !LO.CPlusPlus17 && !LO.CPlusPlus20 && !LO.ObjC;
-      if (!is_c) {
-        llvm::outs() << "collect: skipping " << src << '\n';
+      const LangStandard &LS =
+          LangStandard::getLangStandardForKind(CI.getLangOpts().LangStd);
+      if (LS.getLanguage() != Language::C) {
+        llvm::outs() << llvm::formatv("collect: skipping {0} ({1} code)\n", src,
+                                      LS.getDescription());
         return false;
       }
     }
