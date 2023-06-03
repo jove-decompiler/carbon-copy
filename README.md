@@ -1,7 +1,5 @@
 ### Description
-Transitively extract source code from a codebase written in C into a single (continuous) standalone file.
-
-see [paper](https://people.csail.mit.edu/stelios/papers/codecarboncopy.pdf)
+Transitively extract source code from a codebase written in C into a single (continuous) standalone file. _[paper](https://people.csail.mit.edu/stelios/papers/codecarboncopy.pdf)_
 
 ### Usage
 There are two steps. The first step is to "collect" information about the given codebase. This is accomplished through a clang plugin. Important: that information is specific to *the* build (e.g. the host machine's architecture, any preprocessor definitions specified on the command-line, etc).
