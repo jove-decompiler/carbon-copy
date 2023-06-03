@@ -10,7 +10,7 @@ CFLAGS += -Xclang -load -Xclang /path/to/libcarbon-collect.so \
           -Xclang -plugin-arg-carbon-collect -Xclang /path/to/source \
           -Xclang -plugin-arg-carbon-collect -Xclang /path/to/build
 ```
-After compiling, the build directory should contain a directory named `.carbon`. That is the result of the collect step. The second step is to make use of it with `carbon-extract`...
+After compiling, the build directory should contain a directory named `.carbon`. That is the (serialized) result of the collect step. The second step is to make use of it with `carbon-extract`
 ```bash
 # extract the top-level element at line number 123 (could be a function, or struct, or typedef, etc.)
 carbon-extract relative/path/to/source/file.c:123l
