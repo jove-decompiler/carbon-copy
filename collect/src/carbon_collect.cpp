@@ -237,7 +237,7 @@ public:
                           StringRef FileName,
                           bool IsAngled,
                           CharSourceRange FilenameRange,
-                          const FileEntry *File,
+                          Optional<FileEntryRef> File,
                           StringRef SearchPath,
                           StringRef RelativePath,
                           const Module *Imported,
