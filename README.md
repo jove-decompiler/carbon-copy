@@ -17,11 +17,10 @@ carbon-extract relative/path/to/source/file.c:123l
 ```
 Note that the resulting view of the codebase is specific to the build (chosen configuration, the host machine's architecture, etc), as it occurs during compilation (after the preprocessing step, although the output is *not* preprocessed). Having this "dynamic" view of the codebase is what makes the extraction step straightforward (and correct).
 ## Building
-You should be able to use your distro's clang package as-is.
+Install recent (>=11) clang. If your distro has a package for it, it is recommended to use that.
 ```bash
 cd carbon-copy/
-mkdir build
-cd build/
+mkdir build && cd build/
 cmake -G Ninja -D CMAKE_BUILD_TYPE=RelWithDebInfo ..
 ninja
 ```
