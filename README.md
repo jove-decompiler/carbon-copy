@@ -1,7 +1,7 @@
-### Description
+# Description
 Transitively extract source code from a codebase written in C into a single (continuous) standalone file. _[paper](https://people.csail.mit.edu/stelios/papers/codecarboncopy.pdf)_
 
-### Usage
+# Usage
 There are two steps. The first step is to "collect" information about the given codebase. This is accomplished through a clang plugin. Important: that information is specific to *the* build (e.g. the host machine's architecture, any preprocessor definitions specified on the command-line, etc).
 
 ```bash
@@ -16,4 +16,14 @@ After compiling, the build directory should contain a directory named `.carbon`.
 ```bash
 # extract the top-level element at line number 123 (could be a function, or struct, or typedef, etc.)
 carbon-extract relative/path/to/source/file.c:123l
+```
+
+## Building
+You should be able to use your distro's clang package as-is.
+```bash
+cd carbon-copy/
+mkdir build
+cd build/
+cmake -G Ninja -D CMAKE_BUILD_TYPE=RelWithDebInfo ..
+ninja
 ```
