@@ -15,7 +15,7 @@ After compiling, the build directory should contain a directory named `.carbon`.
 # extract the top-level element at line number 123 (could be a function, or struct, or typedef, etc.)
 carbon-extract relative/path/to/source/file.c:123l
 ```
-Note that the resulting view of the codebase is specific to the build (e.g. the host machine's architecture, etc), as it occurs during compilation (after the preprocessing step). Having this "dynamic" view of the codebase makes the extraction step straightforward.
+Note that the resulting view of the codebase is specific to the build (chosen configuration, the host machine's architecture, etc), as it occurs during compilation (after the preprocessing step). Having this "dynamic" view of the codebase is what makes the extraction step straightforward and correct.
 
 ## Building
 You should be able to use your distro's clang package as-is.
