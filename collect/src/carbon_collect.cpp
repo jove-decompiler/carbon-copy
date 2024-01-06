@@ -770,13 +770,16 @@ get_backwards_offset_to_new_line(const clang_source_range_t &cl_src_rng) {
 
   char ch;
   int pos = beg;
-  do {
-    --pos;
-    ch = character_at_clang_file_offset(
-        cl_src_rng.f, static_cast<clang_source_location_t>(pos));
-  } while (ch != '\r' && ch != '\n' && pos > 0);
 
-  return static_cast<unsigned>(beg - pos - 1);
+  while (pos > 0 &&
+         character_at_clang_file_offset(cl_src_rng.f, static_cast<clang_source_location_t>(pos - 1)) != '\r' &&
+         character_at_clang_file_offset(cl_src_rng.f, static_cast<clang_source_location_t>(pos - 1)) != '\n') {
+    --pos;
+  }
+
+  assert(beg >= pos);
+
+  return static_cast<unsigned>(beg - pos);
 }
 
 unsigned
@@ -823,6 +826,8 @@ unsigned char_count_until_semicolon(const clang_source_range_t &cl_src_rng) {
 
 char character_at_clang_file_offset(const clang_source_file_t &f,
                                     const clang_source_location_t &off) {
+  assert(off >= 0);
+
   SourceManager &SM = *gl_SM;
 
   return SM.getBufferData(f)[static_cast<unsigned>(off)];
