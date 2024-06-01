@@ -192,7 +192,8 @@ public:
   }
 
   void FileChanged(SourceLocation Loc, FileChangeReason Reason,
-                   SrcMgr::CharacteristicKind FileType, FileID PrevFID) {
+                   SrcMgr::CharacteristicKind FileType,
+                   FileID PrevFID) override {
 
     if (debugMode) {
       FileID FID = SM.getDecomposedExpansionLoc(Loc).first;
@@ -237,11 +238,11 @@ public:
                           StringRef FileName,
                           bool IsAngled,
                           CharSourceRange FilenameRange,
-                          Optional<FileEntryRef> File,
+                          OptionalFileEntryRef File,
                           StringRef SearchPath,
                           StringRef RelativePath,
                           const Module *Imported,
-                          SrcMgr::CharacteristicKind FileType) {
+                          SrcMgr::CharacteristicKind FileType) override {
     if (!IncludeTok.is(tok::identifier))
       return;
 
@@ -276,7 +277,8 @@ public:
   //
   // Hook called whenever a macro definition is seen.
   //
-  void MacroDefined(const Token &MacroNameTok, const MacroDirective *MD) {
+  void MacroDefined(const Token &MacroNameTok,
+                    const MacroDirective *MD) override {
     const MacroInfo *MI = MD->getMacroInfo();
     if (!MI)
       return;
@@ -345,7 +347,7 @@ public:
   // Hook called whenever a macro invocation is found.
   //
   void MacroExpands(const Token &MacroNameTok, const MacroDefinition &MD,
-                    SourceRange userSR, const MacroArgs *Args) {
+                    SourceRange userSR, const MacroArgs *Args) override {
     const MacroInfo *MI = MD.getMacroInfo();
     if (!MI)
       return;
@@ -385,7 +387,7 @@ public:
   // Hook called whenever the 'defined' operator is seen.
   //
   void Defined(const Token &MacroNameTok, const MacroDefinition &MD,
-               SourceRange Range) {
+               SourceRange Range) override {
     const MacroInfo *MI = MD.getMacroInfo();
 
     if (!MI || MI->isBuiltinMacro() || isInBuiltin(MI->getDefinitionLoc()) ||
@@ -407,7 +409,7 @@ public:
   // Hook called whenever an #ifdef is seen.
   //
   void Ifdef(SourceLocation Loc, const Token &MacroNameTok,
-             const MacroDefinition &MD) {
+             const MacroDefinition &MD) override {
     const MacroInfo *MI = MD.getMacroInfo();
     if (!MI || MI->isBuiltinMacro() || isInBuiltin(MI->getDefinitionLoc()) ||
         isInBuiltin(Loc))
@@ -428,7 +430,7 @@ public:
   // Hook called whenever an #ifndef is seen.
   //
   void Ifndef(SourceLocation Loc, const Token &MacroNameTok,
-              const MacroDefinition &MD) {
+              const MacroDefinition &MD) override {
     const MacroInfo *MI = MD.getMacroInfo();
     if (!MI || MI->isBuiltinMacro() || isInBuiltin(MI->getDefinitionLoc()) ||
         isInBuiltin(Loc))
@@ -469,7 +471,7 @@ public:
     return clang_source_range(D->getSourceRange());
   }
 
-  bool HandleTopLevelDecl(DeclGroupRef DR) {
+  bool HandleTopLevelDecl(DeclGroupRef DR) override {
     for (DeclGroupRef::iterator b = DR.begin(), e = DR.end(); b != e; ++b) {
       Decl *D = *b;
 
@@ -538,7 +540,7 @@ public:
     return true;
   }
 
-  void HandleTranslationUnit(ASTContext &Context) {
+  void HandleTranslationUnit(ASTContext &Context) override {
     //
     // handle preprocessor ifdef, ifndef, if defined at the end, because we only
     // want to consider those uses which fall within top-level declarations and
