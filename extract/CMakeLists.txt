@@ -15,8 +15,12 @@ target_include_directories(carbon-extract PRIVATE
   ../collect/include
 )
 
-target_link_libraries(carbon-extract PRIVATE
-  boost_filesystem
-  boost_serialization
-  boost_program_options
-)
+target_link_libraries(carbon-extract PRIVATE Boost::system)
+target_link_libraries(carbon-extract PRIVATE Boost::format)
+target_link_libraries(carbon-extract PRIVATE Boost::graph)
+target_link_libraries(carbon-extract PRIVATE Boost::icl)
+target_link_libraries(carbon-extract PRIVATE Boost::filesystem)
+target_link_libraries(carbon-extract PRIVATE Boost::serialization)
+target_link_libraries(carbon-extract PRIVATE Boost::program_options)
+
+install(TARGETS carbon-extract RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")

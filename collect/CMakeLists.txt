@@ -14,10 +14,14 @@ target_include_directories(carbon-collect PRIVATE
 
 llvm_map_components_to_libnames(llvm_libs support core irreader)
 
-target_link_libraries(carbon-collect
-  ${llvm_libs}
+target_link_libraries(carbon-collect PRIVATE ${llvm_libs})
 
-  boost_serialization
-  boost_filesystem
-  boost_system
-)
+target_link_libraries(carbon-collect PRIVATE Boost::system)
+target_link_libraries(carbon-collect PRIVATE Boost::format)
+target_link_libraries(carbon-collect PRIVATE Boost::graph)
+target_link_libraries(carbon-collect PRIVATE Boost::icl)
+target_link_libraries(carbon-collect PRIVATE Boost::filesystem)
+target_link_libraries(carbon-collect PRIVATE Boost::serialization)
+target_link_libraries(carbon-collect PRIVATE Boost::program_options)
+
+install(TARGETS carbon-collect RUNTIME DESTINATION "${CMAKE_INSTALL_LIBDIR}")
