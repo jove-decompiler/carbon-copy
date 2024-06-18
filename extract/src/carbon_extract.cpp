@@ -95,7 +95,7 @@ int main(int argc, char **argv) {
     if (reachable.find(c) == reachable.end())
       continue;
 
-    if (is_system_code(g, c)) {
+    if (!syst_code && is_system_code(g, c)) {
       string sys_hdr = top_level_system_header_of_code(g, c);
       if (sys_hdrs_incl.find(sys_hdr) != sys_hdrs_incl.end())
         continue;
