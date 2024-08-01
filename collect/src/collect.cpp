@@ -542,24 +542,34 @@ void collector_priv::fixup_static_functions() {
 
   //
   // for all code which depends on a static function declaration, search for a
-  // static function definition and add a forward declaration edge to it.
+  // corresponding definition and add a forward declaration edge to it.
   //
   for (auto &entry : res[boost::graph_bundle].static_decls) {
+    full_source_location_t def_sr;
+
     // does a corresponding definition exist?
-    auto defs_it = res[boost::graph_bundle].static_defs.find(entry.first);
-    if (defs_it == res[boost::graph_bundle].static_defs.end()) {
-      llvm::errs()
-          << "warning: no definition found for static function declaration "
-          << entry.first << '\n';
-      continue;
+    auto sdefs_it = res[boost::graph_bundle].static_defs.find(entry.first);
+    if (sdefs_it == res[boost::graph_bundle].static_defs.end()) {
+      // try looking at non-static global definitions
+      auto gdefs_it = res[boost::graph_bundle].glbl_defs.find(entry.first);
+      if (gdefs_it == res[boost::graph_bundle].glbl_defs.end()) {
+	llvm::errs()
+	    << "warning: no definition found for static function declaration "
+	    << entry.first << '\n';
+	continue;
+      }
+
+      def_sr = (*gdefs_it).second;
+    } else {
+      auto def_it = (*sdefs_it).second.begin();
+      assert(def_it != (*sdefs_it).second.end());
+
+      def_sr = *def_it++;
+
+      if (def_it != (*sdefs_it).second.end())
+	llvm::errs() << "warning: multiple definitions found for static function "
+		     << entry.first << '\n';
     }
-
-    auto def_it = (*defs_it).second.begin();
-    auto def_sr = *def_it++;
-
-    if (def_it != (*defs_it).second.end())
-      llvm::errs() << "warning: multiple definitions found for static function "
-                   << entry.first << '\n';
 
     // get definition vertex
     auto &def_sr_map = is_system_source_file(def_sr.f)
