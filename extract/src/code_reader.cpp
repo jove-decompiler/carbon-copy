@@ -19,7 +19,10 @@ static void print_istream_error(const istream& is) {
     cerr << "irrecoverable stream error (badbit)" << endl;
 }
 
-code_reader::code_reader(const depends_t &g) : g(g) {
+code_reader::code_reader(
+    const depends_t &g,
+    const std::vector<boost::filesystem::path> &exclude_dirs)
+    : g(g), exclude_dirs(exclude_dirs) {
   const depends_context_t &depctx = g[boost::graph_bundle];
 
 #if 0
@@ -99,6 +102,19 @@ code_reader::code_reader(const depends_t &g) : g(g) {
 
 code_reader::~code_reader() {}
 
+bool code_reader::is_path_excluded(
+    const boost::filesystem::path &target_path) const {
+  for (const auto &dir : exclude_dirs) {
+    // Check if target_path is located below dir
+    if (std::distance(dir.begin(), dir.end()) <=
+            std::distance(target_path.begin(), target_path.end()) &&
+        std::equal(dir.begin(), dir.end(), target_path.begin())) {
+      return true;
+    }
+  }
+  return false;
+}
+
 string code_reader::source_text(code_t c) {
   const source_range_t &src_rng = g[c];
 
@@ -117,7 +133,11 @@ string code_reader::source_text(code_t c) {
                     ? g[boost::graph_bundle].syst_src_f_paths
                     : g[boost::graph_bundle].user_src_f_paths;
 
-  ifstream is(paths.at(index_of_source_file(src_rng.f)));
+  const std::string &path = paths.at(index_of_source_file(src_rng.f));
+  if (is_path_excluded(path))
+    return "";
+
+  ifstream is(path);
   if (!is) {
     cerr << "error: could not read "
          << paths.at(index_of_source_file(src_rng.f)) << endl;

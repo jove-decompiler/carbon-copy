@@ -1,6 +1,7 @@
 #pragma once
 #include "collection.h"
 #include <vector>
+#include <boost/filesystem.hpp>
 
 namespace carbon {
 
@@ -10,8 +11,13 @@ class code_reader {
   std::vector<unsigned> user_file_sizes;
   std::vector<unsigned> syst_file_sizes;
 
+  const std::vector<boost::filesystem::path> &exclude_dirs;
+
+  bool is_path_excluded(const boost::filesystem::path &) const;
+
 public:
-  code_reader(const depends_t&);
+  code_reader(const depends_t &,
+              const std::vector<boost::filesystem::path> &exclude_dirs = {});
   ~code_reader();
 
   std::string source_text(code_t);

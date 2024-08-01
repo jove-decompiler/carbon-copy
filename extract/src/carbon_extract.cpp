@@ -22,7 +22,7 @@ namespace fs = boost::filesystem;
 typedef boost::format fmt;
 
 static tuple<fs::path, collection_sources_t, code_location_list_t,
-             global_symbol_list_t, int, bool, bool, bool, bool>
+             global_symbol_list_t, vector<fs::path>, int, bool, bool, bool, bool>
 parse_command_line_arguments(int argc, char **argv);
 
 int main(int argc, char **argv) {
@@ -30,6 +30,7 @@ int main(int argc, char **argv) {
   collection_sources_t clc_files;
   code_location_list_t desired_code_locs;
   global_symbol_list_t desired_glbs;
+  vector<fs::path> exclude_dirs;
   int verb;
   bool only_tys;
   bool graphviz;
@@ -39,15 +40,17 @@ int main(int argc, char **argv) {
   //
   // parse command line
   //
-  tie(ofp, clc_files, desired_code_locs, desired_glbs, verb, only_tys, graphviz,
-      syst_code, debug) = parse_command_line_arguments(argc, argv);
+  tie(ofp, clc_files, desired_code_locs, desired_glbs, exclude_dirs, verb, only_tys,
+      graphviz, syst_code, debug) = parse_command_line_arguments(argc, argv);
+
+  //cerr << "syst_code: " << syst_code << '\n';
 
   //
   // take every collection for each source file, and merge (link) them together
   //
   depends_t g;
   link(g, clc_files);
-  code_reader c_reader(g);
+  code_reader c_reader(g, exclude_dirs);
 
   //
   // compute a minimal set which contains the requested code
@@ -115,7 +118,9 @@ int main(int argc, char **argv) {
       if (debug)
         o << "/* " << c_reader.debug_source_description(c) << " */" << endl;
 
-      o << c_reader.source_text(c) << endl << endl;
+      std::string src(c_reader.source_text(c));
+      if (!src.empty())
+	o << src << endl << endl;
     }
   }
 
@@ -151,12 +156,13 @@ static int line_number_to_offset(const fs::path& p, int lnno) {
 }
 
 tuple<fs::path, collection_sources_t, code_location_list_t,
-      global_symbol_list_t, int, bool, bool, bool, bool>
+      global_symbol_list_t, vector<fs::path>, int, bool, bool, bool, bool>
 parse_command_line_arguments(int argc, char **argv) {
   fs::path root_src_dir;
   fs::path root_bin_dir;
   vector<string> code_args;
   vector<string> from_args;
+  vector<fs::path> excl_args;
   bool from_all;
 
   fs::path ofp;
@@ -194,6 +200,9 @@ parse_command_line_arguments(int argc, char **argv) {
       ("from,f", po::value< vector<string> >(&from_args),
        "specify an additional source file from which to extract code from (this"
        "option is overrided by --from-all)")
+
+      ("exclude,e", po::value< vector<fs::path> >(&excl_args),
+       "specify root directories of source NOT to extract")
 
       ("debug", "extract code with comments from whence it came")
 
@@ -268,6 +277,17 @@ parse_command_line_arguments(int argc, char **argv) {
     }
   }
 
+
+  vector<fs::path> exclude_dirs;
+  for (const fs::path &path : excl_args) {
+    if (!fs::is_directory(path)) {
+      cerr << "provided path is not directory: " << path << '\n';
+      exit(1);
+    }
+
+    exclude_dirs.push_back(fs::canonical(path));
+  }
+
   for (const string& s : code_args) {
     string::size_type colpos = s.find(':');
 
@@ -329,6 +349,6 @@ parse_command_line_arguments(int argc, char **argv) {
     cll.push_back(make_pair(abspath1.string(), off));
   }
 
-  return make_tuple(ofp, cfl, cll, gsl, verb, only_tys, graphviz, syst_code,
-                    debug);
+  return make_tuple(ofp, cfl, cll, gsl, exclude_dirs, verb, only_tys, graphviz,
+                    syst_code, debug);
 }
