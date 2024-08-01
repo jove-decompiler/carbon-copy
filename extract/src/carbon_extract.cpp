@@ -43,8 +43,6 @@ int main(int argc, char **argv) {
   tie(ofp, clc_files, desired_code_locs, desired_glbs, exclude_dirs, verb, only_tys,
       graphviz, syst_code, debug) = parse_command_line_arguments(argc, argv);
 
-  //cerr << "syst_code: " << syst_code << '\n';
-
   //
   // take every collection for each source file, and merge (link) them together
   //
