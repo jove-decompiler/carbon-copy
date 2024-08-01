@@ -303,10 +303,17 @@ parse_command_line_arguments(int argc, char **argv) {
         fs::path carb_path = fs::canonical(dir_itr->path());
         depends_t dep;
         read_collection_file(dep, carb_path);
-        if (dep[boost::graph_bundle].glbl_defs.find(s) !=
-            dep[boost::graph_bundle].glbl_defs.end()) {
-          cerr << "found " << s << " in "
-               << carb_path.filename().stem().string() << endl;
+
+        bool is_glbl = dep[boost::graph_bundle].glbl_defs.find(s) !=
+                       dep[boost::graph_bundle].glbl_defs.end();
+        bool is_static_glbl = dep[boost::graph_bundle].static_defs.find(s) !=
+                              dep[boost::graph_bundle].static_defs.end();
+
+        if (is_glbl || is_static_glbl) {
+          assert(is_glbl ^ is_static_glbl);
+
+          cerr << "found " << (is_static_glbl ? "static " : "") << "global "
+               << s << " in " << carb_path.filename().stem().string() << endl;
           cfl.second.insert(carb_path);
           break;
         }

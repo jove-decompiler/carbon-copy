@@ -132,25 +132,46 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const depends_t &g,
   //
   for (const string &gs : gsl) {
     auto gl_it = g[boost::graph_bundle].glbl_defs.find(gs);
-    if (gl_it == g[boost::graph_bundle].glbl_defs.end()) {
-      cerr << "symbol " << gs << " not found (skipping) " << endl;
+    if (gl_it != g[boost::graph_bundle].glbl_defs.end()) {
+      const full_source_location_t &sl = (*gl_it).second;
+
+      auto &def_sr_map =
+          is_system_source_file(sl.f)
+              ? syst_src_rng_vert_map[index_of_source_file(sl.f)]
+              : user_src_rng_vert_map[index_of_source_file(sl.f)];
+      auto def_vert_it = def_sr_map.find(sl.beg);
+      if (def_vert_it == def_sr_map.end()) {
+        cerr << "source range for symbol " << gs << " not found (skipping) "
+             << endl;
+        continue;
+      }
+
+      verts.insert(*(*def_vert_it).second.begin());
       continue;
     }
 
-    const full_source_location_t &sl = (*gl_it).second;
+    auto st_it = g[boost::graph_bundle].static_defs.find(gs);
+    if (st_it != g[boost::graph_bundle].static_defs.end() &&
+        !(*st_it).second.empty()) {
+      /* FIXME arbitrarily chosen static definition */
+      const full_source_location_t &sl = *(*st_it).second.begin();
 
-    auto &def_sr_map =
-        is_system_source_file(sl.f)
-            ? syst_src_rng_vert_map[index_of_source_file(sl.f)]
-            : user_src_rng_vert_map[index_of_source_file(sl.f)];
-    auto def_vert_it = def_sr_map.find(sl.beg);
-    if (def_vert_it == def_sr_map.end()) {
-      cerr << "source range for symbol " << gs << " not found (skipping) "
-           << endl;
+      auto &def_sr_map =
+          is_system_source_file(sl.f)
+              ? syst_src_rng_vert_map[index_of_source_file(sl.f)]
+              : user_src_rng_vert_map[index_of_source_file(sl.f)];
+      auto def_vert_it = def_sr_map.find(sl.beg);
+      if (def_vert_it == def_sr_map.end()) {
+        cerr << "source range for symbol " << gs << " not found (skipping) "
+             << endl;
+        continue;
+      }
+
+      verts.insert(*(*def_vert_it).second.begin());
       continue;
     }
 
-    verts.insert(*(*def_vert_it).second.begin());
+    cerr << "symbol " << gs << " not found (skipping) " << endl;
   }
 
   if (verts.empty()) {
