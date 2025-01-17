@@ -40,8 +40,8 @@ else()
 
   FetchContent_Declare(
     Boost
-    URL https://github.com/boostorg/boost/releases/download/boost-1.84.0/boost-1.84.0.tar.xz
-    URL_MD5 893b5203b862eb9bbd08553e24ff146a
+    URL https://github.com/boostorg/boost/releases/download/boost-1.87.0/boost-1.87.0-cmake.tar.xz
+    URL_MD5 d55d43218e81ca3d0fc14436b7665bf1
     DOWNLOAD_EXTRACT_TIMESTAMP ON
   )
 
