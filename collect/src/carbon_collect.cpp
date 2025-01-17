@@ -210,9 +210,9 @@ public:
       if (FE) {
         llvm::errs() << "FileChanged: ";
         if (isSys)
-          llvm::errs() << FE->getName();
+          llvm::errs() << FE->tryGetRealPathName();
         else
-          llvm::errs() << fs::relative(FE->getName().str(), root_src_dir).string();
+          llvm::errs() << fs::relative(FE->tryGetRealPathName().str(), root_src_dir).string();
         llvm::errs() << " (" << FileChangeReasonStrings[Reason] << ")\n";
       }
     }
@@ -242,6 +242,7 @@ public:
                           StringRef SearchPath,
                           StringRef RelativePath,
                           const Module *Imported,
+                          bool ModuleImported,
                           SrcMgr::CharacteristicKind FileType) override {
     if (!IncludeTok.is(tok::identifier))
       return;
@@ -265,9 +266,9 @@ public:
       const FileEntry *FE = SM.getFileEntryForID(FID);
       if (FE) {
         if (isSys)
-          llvm::errs() << FE->getName();
+          llvm::errs() << FE->tryGetRealPathName();
         else
-          llvm::errs() << fs::relative(FE->getName().str(), root_src_dir).string();
+          llvm::errs() << fs::relative(FE->tryGetRealPathName().str(), root_src_dir).string();
 
         llvm::errs() << ")\n";
       }
@@ -628,7 +629,8 @@ public:
   bool ParseArgs(const CompilerInstance &CI,
                  const vector<string> &args) override {
     SourceManager &SM = CI.getSourceManager();
-    const StringRef& src = SM.getFileEntryForID(SM.getMainFileID())->getName();
+    const StringRef &src =
+        SM.getFileEntryForID(SM.getMainFileID())->tryGetRealPathName();
 
     //
     // we only process C code
@@ -750,7 +752,7 @@ fs::path path_of_clang_source_file(const clang_source_file_t &f) {
   if (!FE)
     return fs::path();
 
-  fs::path p(FE->getName().str());
+  fs::path p(FE->tryGetRealPathName().str());
   return fs::canonical(p);
 }
 
@@ -897,9 +899,9 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
   os << '[';
 
   if (clang_is_system_source_file(cl_src_rng.f)) {
-    os << FE->getName();
+    os << FE->tryGetRealPathName();
   } else {
-    os << fs::relative(FE->getName().str(), root_src_dir).string();
+    os << fs::relative(FE->tryGetRealPathName().str(), root_src_dir).string();
   }
 
   os << ' ';

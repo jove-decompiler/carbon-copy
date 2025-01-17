@@ -6,6 +6,11 @@ find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 
+if (LLVM_VERSION_MAJOR LESS 19)
+  message(FATAL_ERROR "This project isn't buldable with LLVM < 19.0.0.")
+endif()
+
+
 #
 # compile flags
 #
