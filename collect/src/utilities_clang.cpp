@@ -8,12 +8,14 @@ using namespace std;
 
 namespace carbon {
 
+/* the following functions are from clang/lib/ARCMigrate/Transforms.cpp */
+
 /// 'Loc' is the end of a statement range. This returns the location
 /// immediately after the semicolon following the statement.
 /// If no semicolon is found or the location is inside a macro, the returned
 /// source location will be invalid.
-SourceLocation findLocationAfterSemi(SourceLocation loc, ASTContext &Ctx,
-                                     bool IsDecl) {
+SourceLocation findLocationAfterSemi(SourceLocation loc,
+                                     ASTContext &Ctx, bool IsDecl) {
   SourceLocation SemiLoc = findSemiAfterLocation(loc, Ctx, IsDecl);
   if (SemiLoc.isInvalid())
     return SourceLocation();
@@ -24,7 +26,8 @@ SourceLocation findLocationAfterSemi(SourceLocation loc, ASTContext &Ctx,
 /// of the semicolon following the statement.
 /// If no semicolon is found or the location is inside a macro, the returned
 /// source location will be invalid.
-SourceLocation findSemiAfterLocation(SourceLocation loc, ASTContext &Ctx,
+SourceLocation findSemiAfterLocation(SourceLocation loc,
+                                     ASTContext &Ctx,
                                      bool IsDecl) {
   SourceManager &SM = Ctx.getSourceManager();
   if (loc.isMacroID()) {
@@ -60,4 +63,5 @@ SourceLocation findSemiAfterLocation(SourceLocation loc, ASTContext &Ctx,
 
   return tok.getLocation();
 }
+
 }
