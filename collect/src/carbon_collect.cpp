@@ -1,8 +1,8 @@
 #include "collect.h"
 #include "utilities_clang.h"
 #include <iostream>
-#include <unordered_set>
-#include <unordered_map>
+#include <boost/unordered/unordered_flat_set.hpp>
+#include <boost/unordered/unordered_flat_map.hpp>
 #include <sstream>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/Frontend/CompilerInstance.h>
@@ -11,14 +11,33 @@
 #include <clang/Lex/PreprocessorOptions.h>
 #include <clang/Basic/FileManager.h>
 #include <llvm/Support/FormatVariadic.h>
+#include <llvm/Support/WithColor.h>
 
 using namespace clang;
-using namespace std;
 namespace fs = boost::filesystem;
+
+using std::string;
+using std::pair;
+using std::list;
+using std::make_pair;
+using std::unique_ptr;
+using std::vector;
+
+using llvm::WithColor;
+template <typename... Params>
+using unordered_set = boost::unordered::unordered_flat_set<Params...>;
+template <typename... Params>
+using unordered_map = boost::unordered::unordered_flat_map<Params...>;
 
 namespace carbon {
 
-static const bool debugMode = false;
+static const bool debugMode =
+#ifdef NDEBUG
+    false
+#else
+    true
+#endif
+    ;
 
 static collector c;
 static fs::path root_src_dir;
@@ -35,6 +54,7 @@ static unordered_map<string, clang_source_range_t> _macro_defs;
 static unordered_map<string, SourceRange> macro_defs;
 
 static clang_source_file_t clang_source_file(FileID);
+template <bool SingleChar = false>
 static clang_source_range_t clang_source_range(const SourceRange &);
 static SourceManager *gl_SM;
 #if 0
@@ -133,7 +153,7 @@ public:
     if (debugMode)
       llvm::errs() << "FieldDecl\n";
 
-    needsType(clang_source_range(D->getSourceRange()),
+    needsType(clang_source_range<true>(D->getSourceRange()),
               D->getTypeSourceInfo()->getType().getTypePtrOrNull());
 
     return true;
@@ -143,7 +163,7 @@ public:
     if (debugMode)
       llvm::errs() << "VarDecl\n";
 
-    needsType(clang_source_range(D->getSourceRange()),
+    needsType(clang_source_range<true>(D->getSourceRange()),
               D->getTypeSourceInfo()->getType().getTypePtrOrNull());
 
     return true;
@@ -153,7 +173,7 @@ public:
     if (debugMode)
       llvm::errs() << "ParmVarDecl\n";
 
-    needsType(clang_source_range(D->getSourceRange()),
+    needsType(clang_source_range<true>(D->getSourceRange()),
               D->getOriginalType().getTypePtrOrNull());
 
     return true;
@@ -463,7 +483,7 @@ public:
     if (!(isa<FunctionDecl>(D) &&
           cast<FunctionDecl>(D)->doesThisDeclarationHaveABody())) {
       SourceLocation semiEnd =
-          findSemiAfterLocation(D->getEndLoc(), D->getASTContext(), true);
+          findSemiAfterLocation(D->getBeginLoc(), D->getASTContext(), true);
       if (semiEnd.isValid()) {
         return clang_source_range(SourceRange(D->getBeginLoc(), semiEnd));
       }
@@ -479,13 +499,6 @@ public:
       if (D->getKind() == Decl::Empty)
         continue;
 
-      clang_source_range_t src_rng = sourceRangeOfTopLevelDecl(D);
-
-      //
-      // mark this declaration as a piece of code
-      //
-      c.code(src_rng);
-
       if (debugMode) {
         llvm::errs() << "TopLevel " << D->getDeclKindName() << ' ';
 
@@ -497,6 +510,13 @@ public:
 
         llvm::errs() << '\n';
       }
+
+      clang_source_range_t src_rng = sourceRangeOfTopLevelDecl(D);
+
+      //
+      // mark this declaration as a piece of code
+      //
+      c.code(src_rng);
 
       //
       // specially treat certain declarations
@@ -669,15 +689,30 @@ public:
   }
 };
 
+struct FileIDHash {
+  std::size_t operator()(FileID FID) const noexcept {
+    return FID.getHashValue();
+  }
+};
+
 struct MultipliersForFileIDs {
   int Curr;
-  map<FileID, int> FIDMap;
+  unordered_map<FileID, int, FileIDHash> FIDMap;
 
   MultipliersForFileIDs() : Curr(0) {}
 };
 
+struct UniqueIDHash {
+  std::size_t operator()(llvm::sys::fs::UniqueID UID) const noexcept {
+    return boost::hash<std::pair<uint64_t, uint64_t>>()(
+        make_pair(UID.getDevice(), UID.getFile()));
+  }
+};
+
 /// Note: SM assigns unique FileID's for each unique \#include chain.
-static map<llvm::sys::fs::UniqueID, MultipliersForFileIDs> FileMultMap;
+static unordered_map<llvm::sys::fs::UniqueID, MultipliersForFileIDs,
+                     UniqueIDHash>
+    FileMultMap;
 
 bool is_counterpart(const clang_source_range_t &lhs,
                     const clang_source_range_t &rhs) {
@@ -704,17 +739,42 @@ normalize_source_range(const clang_source_range_t &cl_src_rng) {
   return {cl_src_rng.f, beg, beg + (cl_src_rng.end - cl_src_rng.beg)};
 }
 
+template <bool SingleChar>
 clang_source_range_t clang_source_range(const SourceRange &SR) {
   SourceManager &SM = *gl_SM;
 
   FileID FID;
   int beg, end;
-  {
+
+  if constexpr (SingleChar) {
+    pair<FileID, unsigned> begInfo = SM.getDecomposedExpansionLoc(SR.getBegin());
+
+    FID = begInfo.first;
+
+    beg = static_cast<int>(begInfo.second);
+    end = beg + 1;
+  } else {
     pair<FileID, unsigned> begInfo = SM.getDecomposedExpansionLoc(SR.getBegin());
     pair<FileID, unsigned> endInfo = SM.getDecomposedExpansionLoc(SR.getEnd());
 
-    if (begInfo.first != endInfo.first)
+    if (begInfo.first != endInfo.first) {
+      llvm::WithColor::error() << "invalid SourceRange spans distinct files ";
+
+      {
+        const FileEntry *FE = SM.getFileEntryForID(begInfo.first);
+        llvm::errs() << FE->tryGetRealPathName() << " (" << begInfo.second << ')';
+      }
+
+      llvm::errs() << " to ";
+
+      {
+        const FileEntry *FE = SM.getFileEntryForID(endInfo.first);
+        llvm::errs() << FE->tryGetRealPathName() << " (" << endInfo.second << ')';
+      }
+
+      llvm::errs() << '\n';
       abort();
+    }
 
     FID = begInfo.first;
 
