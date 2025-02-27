@@ -34,7 +34,26 @@ SourceLocation findSemiAfterLocation(SourceLocation loc,
     if (!Lexer::isAtEndOfMacroExpansion(loc, SM, Ctx.getLangOpts(), &loc))
       return SourceLocation();
   }
+
+#if 0
+  {
+    pair<FileID, unsigned> info = SM.getDecomposedExpansionLoc(loc);
+    llvm::errs() << "findSemiAfterLocation (1): "
+                 << SM.getFileEntryForID(info.first)->tryGetRealPathName()
+                 << " " << info.second << "\n";
+  }
+#endif
+
   loc = Lexer::getLocForEndOfToken(loc, /*Offset=*/0, SM, Ctx.getLangOpts());
+
+#if 0
+  {
+    pair<FileID, unsigned> info = SM.getDecomposedExpansionLoc(loc);
+    llvm::errs() << "findSemiAfterLocation (2): "
+                 << SM.getFileEntryForID(info.first)->tryGetRealPathName()
+                 << " " << info.second << "\n";
+  }
+#endif
 
   // Break down the source location.
   std::pair<FileID, unsigned> locInfo = SM.getDecomposedLoc(loc);
@@ -47,19 +66,31 @@ SourceLocation findSemiAfterLocation(SourceLocation loc,
 
   const char *tokenBegin = file.data() + locInfo.second;
 
+  Token tok;
+  {
   // Lex from the start of the given location.
   Lexer lexer(SM.getLocForStartOfFile(locInfo.first),
               Ctx.getLangOpts(),
               file.begin(), tokenBegin, file.end());
-  Token tok;
   lexer.LexFromRawLexer(tok);
+  }
   if (tok.isNot(tok::semi)) {
     if (!IsDecl)
       return SourceLocation();
     // Declaration may be followed with other tokens; such as an __attribute,
     // before ending with a semicolon.
-    return findSemiAfterLocation(tok.getLocation(), Ctx, /*IsDecl*/true);
+    __attribute__((musttail)) return findSemiAfterLocation(
+        tok.getLocation(), Ctx, /*IsDecl*/ true);
   }
+
+#if 0
+  {
+    pair<FileID, unsigned> info = SM.getDecomposedExpansionLoc(tok.getLocation());
+    llvm::errs() << "findSemiAfterLocation (3): "
+                 << SM.getFileEntryForID(info.first)->tryGetRealPathName()
+                 << " " << info.second << "\n";
+  }
+#endif
 
   return tok.getLocation();
 }
