@@ -57,6 +57,17 @@ static clang_source_file_t clang_source_file(FileID);
 template <bool SingleChar = false>
 static clang_source_range_t clang_source_range(const SourceRange &);
 static SourceManager *gl_SM;
+
+static bool isSourceRangeSensible(const SourceRange& SR) {
+  assert(gl_SM);
+  SourceManager &SM = *gl_SM;
+
+  pair<FileID, unsigned> beg = SM.getDecomposedExpansionLoc(SR.getBegin());
+  pair<FileID, unsigned> end = SM.getDecomposedExpansionLoc(SR.getEnd());
+
+  return beg.first == end.first && SM.getFileEntryForID(beg.first);
+}
+
 #if 0
 static llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
                                      const clang_source_file_t &f);
@@ -201,14 +212,6 @@ public:
   bool isInBuiltin(SourceLocation Loc) {
     auto buffNm = SM.getBufferName(SM.getSpellingLoc(Loc));
     return buffNm == "<built-in>" || buffNm == "<scratch space>";
-  }
-
-
-  bool isSourceRangeSensible(const SourceRange& SR) {
-    pair<FileID, unsigned> beg = SM.getDecomposedExpansionLoc(SR.getBegin());
-    pair<FileID, unsigned> end = SM.getDecomposedExpansionLoc(SR.getEnd());
-
-    return beg.first == end.first && SM.getFileEntryForID(beg.first);
   }
 
   void FileChanged(SourceLocation Loc, FileChangeReason Reason,
@@ -482,8 +485,11 @@ public:
   clang_source_range_t sourceRangeOfTopLevelDecl(Decl *D) {
     if (!(isa<FunctionDecl>(D) &&
           cast<FunctionDecl>(D)->doesThisDeclarationHaveABody())) {
-      SourceLocation semiEnd =
-          findSemiAfterLocation(D->getBeginLoc(), D->getASTContext(), true);
+      SourceLocation semiEnd = findSemiAfterLocation(
+          isSourceRangeSensible(SourceRange(D->getBeginLoc(), D->getEndLoc()))
+              ? D->getEndLoc()
+              : D->getBeginLoc(),
+          D->getASTContext(), true);
       if (semiEnd.isValid()) {
         return clang_source_range(SourceRange(D->getBeginLoc(), semiEnd));
       }
@@ -507,11 +513,13 @@ public:
           if (!ND->getName().empty())
             llvm::errs() << '\"' << ND->getName() << '\"';
         }
-
-        llvm::errs() << '\n';
       }
 
       clang_source_range_t src_rng = sourceRangeOfTopLevelDecl(D);
+
+      if (debugMode) {
+        llvm::errs() << ' ' << src_rng << '\n';
+      }
 
       //
       // mark this declaration as a piece of code
