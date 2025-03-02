@@ -22,7 +22,8 @@ namespace fs = boost::filesystem;
 typedef boost::format fmt;
 
 static tuple<fs::path, collection_sources_t, code_location_list_t,
-             global_symbol_list_t, vector<fs::path>, int, bool, bool, bool, bool>
+             global_symbol_list_t, vector<fs::path>, int, bool, bool, bool,
+             bool, bool>
 parse_command_line_arguments(int argc, char **argv);
 
 int main(int argc, char **argv) {
@@ -33,6 +34,7 @@ int main(int argc, char **argv) {
   vector<fs::path> exclude_dirs;
   int verb;
   bool only_tys;
+  bool notarget;
   bool graphviz;
   bool syst_code;
   bool debug;
@@ -40,8 +42,9 @@ int main(int argc, char **argv) {
   //
   // parse command line
   //
-  tie(ofp, clc_files, desired_code_locs, desired_glbs, exclude_dirs, verb, only_tys,
-      graphviz, syst_code, debug) = parse_command_line_arguments(argc, argv);
+  tie(ofp, clc_files, desired_code_locs, desired_glbs, exclude_dirs, verb,
+      only_tys, notarget, graphviz, syst_code, debug) =
+      parse_command_line_arguments(argc, argv);
 
   //
   // take every collection for each source file, and merge (link) them together
@@ -54,8 +57,9 @@ int main(int argc, char **argv) {
   // compute a minimal set which contains the requested code
   //
   unordered_set<code_t> reachable;
-  set<code_t> desired_code =
-      reachable_code(reachable, g, desired_code_locs, desired_glbs, only_tys);
+  unordered_set<code_t> targets;
+  set<code_t> desired_code = reachable_code(
+      reachable, targets, g, desired_code_locs, desired_glbs, only_tys);
 
   //
   // output graph visualization if requested
@@ -80,6 +84,9 @@ int main(int argc, char **argv) {
   list<code_t> toposorted;
   topologically_sort_code(toposorted, g);
 
+  if (toposorted.empty())
+    return 0;
+
   //
   // print code
   //
@@ -91,6 +98,9 @@ int main(int argc, char **argv) {
   unordered_set<string> sys_hdrs_incl;
   for (code_t c : toposorted) {
     if (is_dummy_code(g, c))
+      continue;
+
+    if (notarget && targets.find(c) != targets.end())
       continue;
 
     if (reachable.find(c) == reachable.end())
@@ -154,7 +164,7 @@ static int line_number_to_offset(const fs::path& p, int lnno) {
 }
 
 tuple<fs::path, collection_sources_t, code_location_list_t,
-      global_symbol_list_t, vector<fs::path>, int, bool, bool, bool, bool>
+      global_symbol_list_t, vector<fs::path>, int, bool, bool, bool, bool, bool>
 parse_command_line_arguments(int argc, char **argv) {
   fs::path root_src_dir;
   fs::path root_bin_dir;
@@ -169,6 +179,7 @@ parse_command_line_arguments(int argc, char **argv) {
   global_symbol_list_t gsl;
   int verb;
   bool only_tys;
+  bool notarget;
   bool graphviz;
   bool syst_code;
   bool debug;
@@ -208,6 +219,8 @@ parse_command_line_arguments(int argc, char **argv) {
 
       ("only-types,t", "only extract types")
 
+      ("no-target,n", "do not copy source code from target")
+
       ("graphviz,g", "output graphviz file")
 
       ("sys-code,s", "inline code from system header files")
@@ -229,6 +242,7 @@ parse_command_line_arguments(int argc, char **argv) {
     }
 
     only_tys = vm.count("only-types") != 0;
+    notarget = vm.count("no-target") != 0;
     graphviz = vm.count("graphviz") != 0;
     syst_code = vm.count("sys-code") != 0;
     from_all = vm.count("from-all") != 0;
@@ -342,7 +356,6 @@ parse_command_line_arguments(int argc, char **argv) {
       exit(1);
     }
     cfl.second.insert(fs::canonical(abspath2));
-
     string rest = s.substr(colpos + 1, s.size() - (colpos + 1) - 1);
     int off;
     if (s[s.size()-1] == 'l') {
@@ -354,6 +367,6 @@ parse_command_line_arguments(int argc, char **argv) {
     cll.push_back(make_pair(abspath1.string(), off));
   }
 
-  return make_tuple(ofp, cfl, cll, gsl, exclude_dirs, verb, only_tys, graphviz,
-                    syst_code, debug);
+  return make_tuple(ofp, cfl, cll, gsl, exclude_dirs, verb, only_tys, notarget,
+                    graphviz, syst_code, debug);
 }

@@ -52,7 +52,9 @@ static void vertex_interval_maps_of_graph(
         &syst_out,
     const depends_t &g);
 
-set<code_t> reachable_code(unordered_set<code_t> &out, const depends_t &g,
+set<code_t> reachable_code(unordered_set<code_t> &out,
+                           unordered_set<code_t> &targets,
+                           const depends_t &g,
                            const code_location_list_t &cll,
                            const global_symbol_list_t &gsl, bool only_tys) {
   set<code_t> res;
@@ -120,6 +122,7 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const depends_t &g,
 
     res.insert(v);
     verts.insert(v);
+    targets.insert(v);
   }
 
 #if 0
@@ -146,7 +149,9 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const depends_t &g,
         continue;
       }
 
-      verts.insert(*(*def_vert_it).second.begin());
+      auto v = *(*def_vert_it).second.begin();
+      verts.insert(v);
+      targets.insert(v);
       continue;
     }
 
@@ -167,7 +172,10 @@ set<code_t> reachable_code(unordered_set<code_t> &out, const depends_t &g,
         continue;
       }
 
-      verts.insert(*(*def_vert_it).second.begin());
+      auto v = *(*def_vert_it).second.begin();
+
+      verts.insert(v);
+      targets.insert(v);
       continue;
     }
 
