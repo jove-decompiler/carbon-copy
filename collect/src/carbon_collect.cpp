@@ -267,13 +267,9 @@ public:
                           const Module *Imported,
                           bool ModuleImported,
                           SrcMgr::CharacteristicKind FileType) override {
-    if (!IncludedFile)
-      return;
-
-    if (!IncludeTok.is(tok::identifier))
-      return;
-
-    if (IncludeTok.getIdentifierInfo()->getPPKeywordID() != tok::pp_include)
+    if (!IncludedFile ||
+        !IncludeTok.is(tok::identifier) ||
+        IncludeTok.getIdentifierInfo()->getPPKeywordID() != tok::pp_include)
       return;
 
     if (debugMode) {
