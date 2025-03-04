@@ -261,12 +261,15 @@ public:
                           StringRef FileName,
                           bool IsAngled,
                           CharSourceRange FilenameRange,
-                          OptionalFileEntryRef File,
+                          OptionalFileEntryRef IncludedFile,
                           StringRef SearchPath,
                           StringRef RelativePath,
                           const Module *Imported,
                           bool ModuleImported,
                           SrcMgr::CharacteristicKind FileType) override {
+    if (!IncludedFile)
+      return;
+
     if (!IncludeTok.is(tok::identifier))
       return;
 
@@ -274,7 +277,11 @@ public:
       return;
 
     if (debugMode) {
-      llvm::errs() << "InclusionDirective: \"" << FileName << "\" (";
+      StringRef IncludedPath = IncludedFile->getFileEntry().tryGetRealPathName();
+      if (IncludedPath.empty())
+        IncludedPath = FileName;
+
+      llvm::errs() << "InclusionDirective: \"" << IncludedPath << "\" (";
 
       FileID FID = SM.getDecomposedExpansionLoc(HashLoc).first;
       bool isSys;
