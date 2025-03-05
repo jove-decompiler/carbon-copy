@@ -542,17 +542,21 @@ void collector_priv::inclusion(const clang_full_source_location_t &include,
   for (tie(vi, vi_end) = boost::vertices(res); vi != vi_end; ++vi) {
     depends_vertex_t v = *vi;
     if (res[v].f == included_f) {
+#if 0
       llvm::errs() << llvm::formatv(
           "wtf {0} {1} {2} {3}\n", boost::in_degree(v, res),
           boost::out_degree(v, res), path_of_source_file(res[v].f), res[v].beg);
+#endif
 
       depends_t::out_edge_iterator e_it, e_it_end;
       for (tie(e_it, e_it_end) = boost::out_edges(v, res);
            e_it != e_it_end; ++e_it) {
         depends_vertex_t v_ = boost::target(*e_it, res);
+#if 0
         llvm::errs() << llvm::formatv("inclusion: needs {0} {1}\n",
                                       path_of_source_file(res[v_].f),
                                       res[v_].beg);
+#endif
         depends_vertex_t needed_v = boost::target(*e_it, res);
         if (preexist_v != needed_v)
           boost::add_edge(preexist_v, needed_v, res);
