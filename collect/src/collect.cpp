@@ -16,6 +16,7 @@
 #include <boost/archive/text_oarchive.hpp>
 #endif
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/FormatVariadic.h>
 
 using namespace std;
 namespace fs = boost::filesystem;
@@ -109,6 +110,12 @@ struct collector_priv {
 
   void follow_users_of(const clang_source_range_t &,
                        const clang_source_range_t &);
+
+  void inclusion(const clang_full_source_location_t &include,
+                 const clang_source_file_t &included);
+
+  void ifdef(const clang_source_range_t &user,
+             const clang_full_source_location_t &usee);
 
   void fixup_static_functions();
 };
@@ -379,6 +386,8 @@ void collector_priv::code(const clang_source_range_t &cl_src_range) {
   list<pair<depends_vertex_t, DEPENDS_EDGE_TYPE>> in_verts;
   list<pair<depends_vertex_t, DEPENDS_EDGE_TYPE>> out_verts;
 
+  std::set<std::pair<unsigned, source_file_t>> abs_includes;
+
   //
   // we need to assemble a set of the vertices we'll be merging, because if
   // there are edges between them we must not add them.
@@ -408,6 +417,9 @@ void collector_priv::code(const clang_source_range_t &cl_src_range) {
     assert((*preexist_it).second.size() == 1);
     auto preexist_v = *(*preexist_it).second.begin();
     preexist_verts.insert(preexist_v);
+
+    for (const auto &include : res[preexist_v].includes)
+      abs_includes.emplace((*preexist_it).first.lower() + include.first, include.second);
 
     {
       depends_t::in_edge_iterator e_it, e_it_end;
@@ -470,6 +482,11 @@ void collector_priv::code(const clang_source_range_t &cl_src_range) {
   res[v].beg = intervl.lower();
   res[v].end = intervl.upper();
 
+  for (const auto &abs_include : abs_includes) {
+    assert(abs_include.first >= intervl.lower());
+    res[v].includes.emplace(abs_include.first - intervl.lower(), abs_include.second);
+  }
+
   //
   // add edges from old preexisting vertices to new vertex
   //
@@ -487,6 +504,86 @@ void collector_priv::code(const clang_source_range_t &cl_src_range) {
 
   if (debugMode)
     llvm::errs() << "  " << intervl << '\n';
+}
+
+static unordered_map<source_file_t, set<clang_full_source_location_t>> ifdefs;
+
+void collector_priv::inclusion(const clang_full_source_location_t &include,
+                               const clang_source_file_t &included) {
+  source_file_t include_f = map_clang_source_file(include.f);
+  source_file_t included_f = map_clang_source_file(included);
+
+  source_ranges_to_vertex_map_t &src_rng_to_vert_map =
+      source_range_vertex_map_of_source_file(include_f);
+
+  auto intervl = boost::icl::discrete_interval<source_location_t>::right_open(
+      include.pos, include.pos + 1);
+  auto preexist_it = src_rng_to_vert_map.find(intervl);
+  if (preexist_it == src_rng_to_vert_map.end())
+    return;
+
+  if (debugMode)
+    llvm::errs() << llvm::formatv("#include of \"{0}\" in code {1}\n",
+                 path_of_source_file(included_f),
+                 path_of_source_file(include_f));
+
+  assert((*preexist_it).second.size() == 1);
+  assert(include.pos >= (*preexist_it).first.lower());
+
+  unsigned offset = include.pos - (*preexist_it).first.lower();
+
+  auto preexist_v = *(*preexist_it).second.begin();
+  res[preexist_v].includes.emplace(offset, included_f);
+
+  //
+  // include uses everything in included
+  //
+  depends_t::vertex_iterator vi, vi_end;
+  for (tie(vi, vi_end) = boost::vertices(res); vi != vi_end; ++vi) {
+    depends_vertex_t v = *vi;
+    if (res[v].f == included_f) {
+      llvm::errs() << llvm::formatv(
+          "wtf {0} {1} {2} {3}\n", boost::in_degree(v, res),
+          boost::out_degree(v, res), path_of_source_file(res[v].f), res[v].beg);
+
+      depends_t::out_edge_iterator e_it, e_it_end;
+      for (tie(e_it, e_it_end) = boost::out_edges(v, res);
+           e_it != e_it_end; ++e_it) {
+        depends_vertex_t v_ = boost::target(*e_it, res);
+        llvm::errs() << llvm::formatv("inclusion: needs {0} {1}\n",
+                                      path_of_source_file(res[v_].f),
+                                      res[v_].beg);
+        depends_vertex_t needed_v = boost::target(*e_it, res);
+        if (preexist_v != needed_v)
+          boost::add_edge(preexist_v, needed_v, res);
+      }
+    }
+  }
+
+  for (const clang_full_source_location_t &def : ifdefs[included_f]) {
+    source_file_t def_f = map_clang_source_file(def.f);
+
+    source_ranges_to_vertex_map_t &src_rng_to_vert_map =
+        source_range_vertex_map_of_source_file(def_f);
+
+    auto defv_it = src_rng_to_vert_map.find(def.pos);
+    if (defv_it == src_rng_to_vert_map.end())
+      continue;
+
+    const depends_vertex_set_t &vert_container = (*defv_it).second;
+    assert(vert_container.size() == 1);
+
+    depends_vertex_t def_vert = *vert_container.begin();
+
+    boost::add_edge(preexist_v, def_vert, res);
+  }
+}
+
+void collector_priv::ifdef(const clang_source_range_t &user,
+                           const clang_full_source_location_t &usee) {
+  source_file_t include_f = map_clang_source_file(user.f);
+
+  ifdefs[include_f].insert(usee);
 }
 
 static void vertex_interval_maps_of_graph(
@@ -652,6 +749,11 @@ void collector::code(const clang_source_range_t &cl_src_range) {
   priv->code(cl_src_range);
 }
 
+void collector::inclusion(const clang_full_source_location_t &include,
+                          const clang_source_file_t &included) {
+  priv->inclusion(include, included);
+}
+
 void collector::global_code(const clang_source_range_t &cl_src_range,
                             const std::string &sym, bool is_definition) {
   code(cl_src_range);
@@ -741,6 +843,11 @@ void collector::use_if_user_exists(
 void collector::follow_users_of(const clang_source_range_t &prior,
                                 const clang_source_range_t &following) {
   priv->follow_users_of(prior, following);
+}
+
+void collector::ifdef(const clang_source_range_t &user,
+                      const clang_full_source_location_t &usee) {
+  priv->ifdef(user, usee);
 }
 
 void collector::write_carbon_output() {

@@ -30,6 +30,15 @@ struct clang_source_range_t {
   clang_source_location_t end;
 };
 
+struct clang_full_source_location_t {
+  clang_source_file_t f;
+  clang_source_location_t pos;
+
+  bool operator<(const clang_full_source_location_t &other) const {
+    return f < other.f || pos < other.pos;
+  }
+};
+
 // defined in carbon_collect.cpp
 char character_at_clang_file_offset(const clang_source_file_t &f,
                                     const clang_source_location_t &o);
@@ -71,6 +80,11 @@ public:
                           const clang_source_range_t &usee);
   void follow_users_of(const clang_source_range_t &prior,
                        const clang_source_range_t &following);
+  void inclusion(const clang_full_source_location_t &include,
+                 const clang_source_file_t &included);
+
+  void ifdef(const clang_source_range_t &user,
+             const clang_full_source_location_t &usee);
 
   void clang_source_file(const clang_source_file_t &);
 

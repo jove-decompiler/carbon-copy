@@ -47,6 +47,10 @@ static fs::path root_bin_dir;
 // will expand macros before the parser will notify of the AST's therein
 static list<pair<clang_source_range_t, clang_source_range_t>> if_def_uses;
 
+// we keep a list of macro uses to apply at the close since the preprocessor
+// will expand macros before the parser will notify of the AST's therein
+static list<pair<clang_full_source_location_t, const FileEntry *>> inclusions;
+
 //
 // stores most-recent #define for a given macro
 //
@@ -56,6 +60,8 @@ static unordered_map<string, SourceRange> macro_defs;
 static clang_source_file_t clang_source_file(FileID);
 template <bool SingleChar = false>
 static clang_source_range_t clang_source_range(const SourceRange &);
+static clang_full_source_location_t
+clang_full_source_location(const SourceLocation &);
 static SourceManager *gl_SM;
 
 static bool isSourceRangeSensible(const SourceRange& SR) {
@@ -261,19 +267,19 @@ public:
                           StringRef FileName,
                           bool IsAngled,
                           CharSourceRange FilenameRange,
-                          OptionalFileEntryRef IncludedFile,
+                          OptionalFileEntryRef IncludedFileRef,
                           StringRef SearchPath,
                           StringRef RelativePath,
                           const Module *Imported,
                           bool ModuleImported,
                           SrcMgr::CharacteristicKind FileType) override {
-    if (!IncludedFile ||
+    if (!IncludedFileRef ||
         !IncludeTok.is(tok::identifier) ||
         IncludeTok.getIdentifierInfo()->getPPKeywordID() != tok::pp_include)
       return;
 
     if (debugMode) {
-      StringRef IncludedPath = IncludedFile->getFileEntry().tryGetRealPathName();
+      StringRef IncludedPath = IncludedFileRef->getFileEntry().tryGetRealPathName();
       if (IncludedPath.empty())
         IncludedPath = FileName;
 
@@ -299,6 +305,9 @@ public:
         llvm::errs() << ")\n";
       }
     }
+
+    inclusions.emplace_back(clang_full_source_location(HashLoc),
+                            &IncludedFileRef->getFileEntry());
   }
 
   //
@@ -450,7 +459,12 @@ public:
 
     clang_source_range_t usee(clang_source_range(useeSR));
 
-    if_def_uses.push_back(make_pair(user, normalize_source_range(usee)));
+    if_def_uses.emplace_back(user, normalize_source_range(usee));
+
+    c.ifdef(user, clang_full_source_location(MI->getDefinitionLoc()));
+
+    if (debugMode)
+      llvm::errs() << "Ifdef " << user << " ---> " << usee << '\n';
   }
 
   //
@@ -587,6 +601,12 @@ public:
 
       c.use_if_user_exists(user, usee);
     }
+
+    //
+    // handle inclusions at the end
+    //
+    for (const auto &pair : inclusions)
+      c.inclusion(pair.first, SM.translateFile(pair.second));
 
     c.write_carbon_output();
   }
@@ -750,6 +770,12 @@ normalize_source_range(const clang_source_range_t &cl_src_rng) {
   return {cl_src_rng.f, beg, beg + (cl_src_rng.end - cl_src_rng.beg)};
 }
 
+clang_full_source_location_t clang_full_source_location(const SourceLocation &Loc) {
+  assert(gl_SM);
+  pair<FileID, unsigned> info = gl_SM->getDecomposedExpansionLoc(Loc);
+  return {info.first, static_cast<clang_source_location_t>(info.second)};
+}
+
 template <bool SingleChar>
 clang_source_range_t clang_source_range(const SourceRange &SR) {
   SourceManager &SM = *gl_SM;
@@ -820,8 +846,10 @@ fs::path path_of_clang_source_file(const clang_source_file_t &f) {
   SourceManager &SM = *gl_SM;
 
   const FileEntry *FE = SM.getFileEntryForID(f);
-  if (!FE)
-    return fs::path();
+  if (!FE) {
+    WithColor::error() << "failed to get path\n";
+    abort();
+  }
 
   fs::path p(FE->tryGetRealPathName().str());
   return fs::canonical(p);

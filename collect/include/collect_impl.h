@@ -34,9 +34,11 @@ struct source_range_t {
   source_location_t beg;
   source_location_t end;
 
+  std::set<std::pair<unsigned, source_file_t>> includes;
+
   template <class Archive>
   void serialize(Archive &ar, const unsigned int) {
-    ar &f &beg &end;
+    ar &f &beg &end &includes;
   }
 };
 
@@ -80,7 +82,6 @@ struct depends_context_t {
       static_decls;
 
   std::vector<std::string> user_src_f_paths;
-
   std::vector<std::string> syst_src_f_paths;
 
   /* parallel to syst_src_f_paths, this contains the "top-level" headers

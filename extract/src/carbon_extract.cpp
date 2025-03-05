@@ -23,7 +23,7 @@ typedef boost::format fmt;
 
 static tuple<fs::path, collection_sources_t, code_location_list_t,
              global_symbol_list_t, vector<fs::path>, int, bool, bool, bool,
-             bool, bool>
+             bool, bool, bool>
 parse_command_line_arguments(int argc, char **argv);
 
 int main(int argc, char **argv) {
@@ -37,13 +37,14 @@ int main(int argc, char **argv) {
   bool notarget;
   bool graphviz;
   bool syst_code;
+  bool flatten;
   bool debug;
 
   //
   // parse command line
   //
   tie(ofp, clc_files, desired_code_locs, desired_glbs, exclude_dirs, verb,
-      only_tys, notarget, graphviz, syst_code, debug) =
+      only_tys, notarget, graphviz, syst_code, flatten, debug) =
       parse_command_line_arguments(argc, argv);
 
   //
@@ -127,8 +128,37 @@ int main(int argc, char **argv) {
         o << "/* " << c_reader.debug_source_description(c) << " */" << endl;
 
       std::string src(c_reader.source_text(c));
-      if (!src.empty())
+      if (!src.empty()) {
+        if (flatten && !g[c].includes.empty()) {
+          for (const auto &inclusion : g[c].includes) {
+            unsigned pos;
+            source_file_t included_f;
+            std::tie(pos, included_f) = inclusion;
+
+            if (is_system_source_file(included_f))
+              continue;
+
+            size_t newlinePos = src.find('\n', pos);
+            if (newlinePos != std::string::npos) {
+              const char *included_path =
+                  g[boost::graph_bundle]
+                      .user_src_f_paths.at(index_of_source_file(included_f))
+                      .c_str();
+
+              std::ifstream ifs(included_path);
+              if (!ifs.is_open())
+                abort();
+
+              std::stringstream buffer;
+              buffer << ifs.rdbuf();
+
+              // Replace from pos to newline (including the newline character)
+              src.replace(pos, newlinePos - pos + 1, buffer.str());
+            }
+          }
+        }
 	o << src << endl << endl;
+      }
     }
   }
 
@@ -164,7 +194,7 @@ static int line_number_to_offset(const fs::path& p, int lnno) {
 }
 
 tuple<fs::path, collection_sources_t, code_location_list_t,
-      global_symbol_list_t, vector<fs::path>, int, bool, bool, bool, bool, bool>
+      global_symbol_list_t, vector<fs::path>, int, bool, bool, bool, bool, bool, bool>
 parse_command_line_arguments(int argc, char **argv) {
   fs::path root_src_dir;
   fs::path root_bin_dir;
@@ -182,6 +212,7 @@ parse_command_line_arguments(int argc, char **argv) {
   bool notarget;
   bool graphviz;
   bool syst_code;
+  bool flatten;
   bool debug;
 
   try {
@@ -224,6 +255,8 @@ parse_command_line_arguments(int argc, char **argv) {
       ("graphviz,g", "output graphviz file")
 
       ("sys-code,s", "inline code from system header files")
+
+      ("flatten", "expand #include's")
     ;
 
     po::positional_options_description p;
@@ -245,6 +278,7 @@ parse_command_line_arguments(int argc, char **argv) {
     notarget = vm.count("no-target") != 0;
     graphviz = vm.count("graphviz") != 0;
     syst_code = vm.count("sys-code") != 0;
+    flatten = vm.count("flatten") != 0;
     from_all = vm.count("from-all") != 0;
     debug = vm.count("debug") != 0;
   } catch (exception &e) {
@@ -368,5 +402,5 @@ parse_command_line_arguments(int argc, char **argv) {
   }
 
   return make_tuple(ofp, cfl, cll, gsl, exclude_dirs, verb, only_tys, notarget,
-                    graphviz, syst_code, debug);
+                    graphviz, syst_code, flatten, debug);
 }
