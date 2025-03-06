@@ -19,6 +19,7 @@ typedef clang::FileID clang_source_file_t;
 std::size_t hash_of_clang_source_file(const clang_source_file_t &);
 
 // defined in clang_collect.cpp
+struct failed_to_get_path_exception {};
 boost::filesystem::path path_of_clang_source_file(const clang_source_file_t &);
 
 // defined in clang_collect.cpp

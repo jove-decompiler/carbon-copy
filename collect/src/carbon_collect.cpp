@@ -599,8 +599,14 @@ public:
     //
     // handle inclusions at the end
     //
-    for (const auto &pair : inclusions)
-      c.inclusion(pair.first, SM.translateFile(pair.second));
+    for (const auto &pair : inclusions) {
+      try {
+        c.inclusion(pair.first, SM.translateFile(pair.second));
+      } catch (const failed_to_get_path_exception &) {
+        if (debugMode)
+          llvm::errs() << "failed to get path to source file\n";
+      }
+    }
 
     c.write_carbon_output();
   }
@@ -841,8 +847,7 @@ fs::path path_of_clang_source_file(const clang_source_file_t &f) {
 
   const FileEntry *FE = SM.getFileEntryForID(f);
   if (!FE) {
-    WithColor::error() << "failed to get path\n";
-    abort();
+    throw failed_to_get_path_exception();
   }
 
   fs::path p(FE->tryGetRealPathName().str());
