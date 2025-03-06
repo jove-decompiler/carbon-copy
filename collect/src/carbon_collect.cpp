@@ -601,7 +601,15 @@ public:
     //
     for (const auto &pair : inclusions) {
       try {
-        c.inclusion(pair.first, SM.translateFile(pair.second));
+        clang_source_file_t included = SM.translateFile(pair.second);
+        if (included.isInvalid()) {
+          if (debugMode) {
+            llvm::errs() << "failed to process inclusion\n";
+          }
+          continue;
+        }
+
+        c.inclusion(pair.first, included);
       } catch (const failed_to_get_path_exception &) {
         if (debugMode)
           llvm::errs() << "failed to get path to source file\n";
