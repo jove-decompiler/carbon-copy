@@ -31,13 +31,7 @@ using unordered_map = boost::unordered::unordered_flat_map<Params...>;
 
 namespace carbon {
 
-static const bool debugMode =
-#ifdef NDEBUG
-    false
-#else
-    true
-#endif
-    ;
+static const bool debugMode = false;
 
 static collector c;
 static fs::path root_src_dir;
