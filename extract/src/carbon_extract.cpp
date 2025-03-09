@@ -340,7 +340,7 @@ parse_command_line_arguments(int argc, char **argv) {
   try {
     fs::path carbon_symbol_table = carbon_dir / ".cc";
 
-    syms_file = std::make_unique<cc_file_t>(boost::interprocess::open_only,
+    syms_file = std::make_unique<cc_file_t>(boost::interprocess::open_read_only,
                                             carbon_symbol_table.c_str());
 
     if (syms_file)
