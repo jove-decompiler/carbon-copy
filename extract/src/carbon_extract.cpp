@@ -356,7 +356,7 @@ parse_command_line_arguments(int argc, char **argv) {
     if (colpos == string::npos) {
       gsl.push_back(s);
 
-      if (psyms && psyms->cvisit(
+      if (!(psyms && psyms->cvisit(
             s.c_str(), [&](const typename cc_syms_t::value_type &x) -> void {
               const cc_carbs_t &carbs = x.second;
 
@@ -372,7 +372,7 @@ parse_command_line_arguments(int argc, char **argv) {
                     cfl.second.insert(x.c_str());
                     return false;
                   });
-            }) == 0) {
+            }) > 0)) {
       // find source file where global is defined.
       fs::recursive_directory_iterator end_iter;
       for (fs::recursive_directory_iterator dir_itr(carbon_dir);
