@@ -91,8 +91,10 @@ int main(int argc, char **argv) {
   //
   // print code
   //
-  ofstream *ofs = nullptr;
-  ostream &o = ofp.empty() ? cout : *(ofs = new ofstream(ofp.string()));
+  std::unique_ptr<ofstream> ofs;
+
+  ostream &o =
+      ofp.empty() ? cout : *(ofs = std::make_unique<ofstream>(ofp.string()));
 
   auto& incs = g[boost::graph_bundle].include.dirs;
 
@@ -162,7 +164,6 @@ int main(int argc, char **argv) {
     }
   }
 
-  delete ofs;
   return 0;
 }
 
