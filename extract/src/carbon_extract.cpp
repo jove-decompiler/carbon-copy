@@ -357,9 +357,7 @@ parse_command_line_arguments(int argc, char **argv) {
       gsl.push_back(s);
 
       if (psyms) {
-        cc_syms_t &syms = *psyms;
-
-        syms.cvisit(
+        psyms->cvisit(
             s.c_str(), [&](const typename cc_syms_t::value_type &x) -> void {
               const cc_carbs_t &carbs = x.second;
 
