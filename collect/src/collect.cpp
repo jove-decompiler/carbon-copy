@@ -868,7 +868,9 @@ void collector::write_carbon_output() {
 
   fs::create_directories(carbon_src.parent_path());
 
-  ofstream ofs(carbon_src.string() + ".carbon");
+  std::string path_to_carbon(carbon_src.string() + ".carbon");
+
+  ofstream ofs(path_to_carbon);
   {
 #ifdef CARBON_BINARY
     boost::archive::binary_oarchive oa(ofs);
@@ -877,6 +879,46 @@ void collector::write_carbon_output() {
 #endif
     oa << priv->res;
   }
+
+  fs::path carbon_symbol_table = carbon_dir / ".cc";
+  cc_file_t syms_file(
+      boost::interprocess::open_or_create, carbon_symbol_table.c_str(),
+      1u << 30 /* 1GiB */);
+
+  cc_syms_t &syms = *syms_file.find_or_construct<cc_syms_t>("cc_syms")(
+      syms_file.get_segment_manager());
+
+  auto something_def = [&](const std::string &something) -> void {
+    cc_carbs_t carbs(syms_file.get_segment_manager());
+
+    {
+      ip_string ip_carbon_src(syms_file.get_segment_manager());
+      to_ips(ip_carbon_src, path_to_carbon);
+
+      carbs.insert(boost::move(ip_carbon_src));
+    }
+
+    ip_string ip_sym(syms_file.get_segment_manager());
+    to_ips(ip_sym, something);
+
+    syms.emplace_or_visit(
+        boost::move(ip_sym),
+        boost::move(carbs),
+        [&](typename cc_syms_t::value_type &x) -> void {
+          ip_string ip_carbon_src(syms_file.get_segment_manager());
+          to_ips(ip_carbon_src, path_to_carbon);
+
+          x.second.insert_or_cvisit(
+              boost::move(ip_carbon_src),
+              [&](const typename cc_carbs_t::value_type &x) -> void {});
+        });
+  };
+
+  for (const auto &pair : priv->res[boost::graph_bundle].glbl_defs)
+    something_def(pair.first);
+
+  for (const auto &pair : priv->res[boost::graph_bundle].static_defs)
+    something_def(pair.first);
 }
 
 llvm::raw_ostream &

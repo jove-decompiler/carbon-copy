@@ -1,5 +1,10 @@
 #pragma once
 #include <boost/graph/adjacency_list.hpp>
+#include <boost/container/scoped_allocator.hpp>
+#include <boost/interprocess/containers/string.hpp>
+#include <boost/interprocess/managed_mapped_file.hpp>
+#include <boost/unordered/concurrent_flat_map.hpp>
+#include <boost/unordered/concurrent_flat_set.hpp>
 #include <string>
 
 namespace carbon {
@@ -114,4 +119,108 @@ typedef boost::adjacency_list<
 
 typedef depends_t::vertex_descriptor depends_vertex_t;
 typedef depends_t::edge_descriptor depends_edge_t;
+
+//
+// symbol table (.cc)
+//
+
+typedef boost::interprocess::managed_mapped_file cc_file_t;
+typedef cc_file_t::segment_manager segment_manager_t;
+
+typedef boost::interprocess::allocator<char, segment_manager_t>
+    ip_char_allocator;
+typedef boost::interprocess::basic_string<char, std::char_traits<char>,
+                                          ip_char_allocator>
+    ip_string;
+
+struct ip_string_hash_t  {
+  using is_transparent = void;
+
+  template <typename A>
+  std::size_t operator()(
+      const boost::interprocess::basic_string<char, std::char_traits<char>, A>
+          &str) const noexcept {
+    return std::hash<std::string_view>{}(std::string_view(str.data(), str.size()));
+  }
+
+  std::size_t operator()(std::string_view sv) const noexcept {
+    return std::hash<std::string_view>{}(sv);
+  }
+
+  std::size_t operator()(const char *s) const noexcept {
+    return std::hash<std::string_view>{}(s);
+  }
+};
+
+struct ip_string_equal_t {
+  using is_transparent = void;
+
+  template <typename A>
+  bool operator()(
+      const boost::interprocess::basic_string<char, std::char_traits<char>, A> &lhs,
+      const boost::interprocess::basic_string<char, std::char_traits<char>, A> &rhs) const noexcept {
+    return lhs == rhs;
+  }
+
+  template <typename A>
+  bool operator()(const boost::interprocess::basic_string<char, std::char_traits<char>, A> &lhs,
+      std::string_view rhs) const noexcept {
+    return lhs == rhs;
+  }
+
+  template <typename A>
+  bool operator()(std::string_view lhs,
+                  const boost::interprocess::basic_string<char, std::char_traits<char>, A> &rhs) const noexcept {
+    return lhs == rhs;
+  }
+
+  bool operator()(std::string_view lhs, std::string_view rhs) const noexcept {
+    return lhs == rhs;
+  }
+
+  template <typename A>
+  bool operator()(const boost::interprocess::basic_string<char, std::char_traits<char>, A> &lhs,
+      const char *rhs) const noexcept {
+    return lhs == rhs;
+  }
+
+  template <typename A>
+  bool operator()(
+      const char *lhs,
+      const boost::interprocess::basic_string<char, std::char_traits<char>, A> &rhs) const noexcept {
+    return lhs == rhs;
+  }
+
+  bool operator()(std::string_view lhs, const char *rhs) const noexcept {
+    return lhs == rhs;
+  }
+
+  bool operator()(const char *lhs, std::string_view rhs) const noexcept {
+    return lhs == rhs;
+  }
+};
+
+static inline std::string un_ips(const ip_string &x) {
+  std::string res;
+  res.reserve(x.size());
+  std::copy(x.begin(), x.end(), std::back_inserter(res));
+  return res;
+}
+
+static inline ip_string &to_ips(ip_string &res, std::string_view x) {
+  res.clear();
+  res.reserve(x.size());
+  std::copy(x.begin(), x.end(), std::back_inserter(res));
+  return res;
+}
+
+using cc_carbs_t = boost::concurrent_flat_set<
+    ip_string, ip_string_hash_t, ip_string_equal_t,
+    boost::container::scoped_allocator_adaptor<
+        boost::interprocess::allocator<ip_string, segment_manager_t>>>;
+
+using cc_syms_t = boost::concurrent_flat_map<
+    ip_string, cc_carbs_t, ip_string_hash_t, ip_string_equal_t,
+    boost::container::scoped_allocator_adaptor<boost::interprocess::allocator<
+        std::pair<const ip_string, cc_carbs_t>, segment_manager_t>>>;
 }

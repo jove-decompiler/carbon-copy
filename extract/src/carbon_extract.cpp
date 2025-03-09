@@ -334,13 +334,49 @@ parse_command_line_arguments(int argc, char **argv) {
     exclude_dirs.push_back(fs::canonical(path));
   }
 
+  std::unique_ptr<cc_file_t> syms_file;
+  cc_syms_t *psyms = nullptr;
+
+  try {
+    fs::path carbon_symbol_table = carbon_dir / ".cc";
+
+    syms_file = std::make_unique<cc_file_t>(boost::interprocess::open_only,
+                                            carbon_symbol_table.c_str());
+
+    if (syms_file)
+      psyms = syms_file->find<cc_syms_t>("cc_syms").first;
+  } catch (const boost::interprocess::interprocess_exception &) {}
+
   for (const string& s : code_args) {
     string::size_type colpos = s.find(':');
 
+    //
     // if does not contain colon, it must be a global symbol
+    //
     if (colpos == string::npos) {
       gsl.push_back(s);
 
+      if (psyms) {
+        cc_syms_t &syms = *psyms;
+
+        syms.cvisit(
+            s.c_str(), [&](const typename cc_syms_t::value_type &x) -> void {
+              const cc_carbs_t &carbs = x.second;
+
+              cerr << "found (maybe static) global " << s << " in\n";
+
+              carbs.cvisit_all(
+                  [&](const typename cc_carbs_t::value_type &x) -> void {
+                    cerr << "  " << x.c_str() << '\n';
+                  });
+
+              carbs.cvisit_while(
+                  [&](const typename cc_carbs_t::value_type &x) -> bool {
+                    cfl.second.insert(x.c_str());
+                    return false;
+                  });
+            });
+      } else {
       // find source file where global is defined.
       fs::recursive_directory_iterator end_iter;
       for (fs::recursive_directory_iterator dir_itr(carbon_dir);
@@ -361,10 +397,11 @@ parse_command_line_arguments(int argc, char **argv) {
           assert(is_glbl ^ is_static_glbl);
 
           cerr << "found " << (is_static_glbl ? "static " : "") << "global "
-               << s << " in " << carb_path.filename().stem().string() << endl;
+               << s << " in " << carb_path.string() << endl;
           cfl.second.insert(carb_path);
           break;
         }
+      }
       }
 
       continue;
