@@ -141,12 +141,18 @@ int main(int argc, char **argv) {
               continue;
 
             size_t newlinePos = src.find('\n', pos);
-            if (newlinePos != std::string::npos) {
-              const char *included_path =
-                  g[boost::graph_bundle]
-                      .user_src_f_paths.at(index_of_source_file(included_f))
-                      .c_str();
+            if (newlinePos == std::string::npos)
+              continue;
 
+            const char *included_path =
+                g[boost::graph_bundle]
+                    .user_src_f_paths.at(index_of_source_file(included_f))
+                    .c_str();
+
+            std::cerr << "included " << included_path << std::endl;
+
+            std::string contents;
+            {
               std::ifstream ifs(included_path);
               if (!ifs.is_open())
                 abort();
@@ -154,12 +160,64 @@ int main(int argc, char **argv) {
               std::stringstream buffer;
               buffer << ifs.rdbuf();
 
-              // Replace from pos to newline (including the newline character)
-              src.replace(pos, newlinePos - pos + 1, buffer.str());
+              contents = buffer.str();
             }
+
+            depends_t::vertex_iterator vi, vi_end;
+            for (tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi) {
+              depends_vertex_t v = *vi;
+
+              if (g[v].f != included_f)
+                continue;
+              if (g[v].beg != location_entire_file_beg ||
+                  g[v].end != location_entire_file_end)
+                continue;
+
+              for (const auto &inclusion_ : g[v].includes) {
+                unsigned pos_;
+                source_file_t included_f_;
+                std::tie(pos_, included_f_) = inclusion_;
+
+                if (is_system_source_file(included_f_))
+                  continue;
+
+                const char *included_path_ =
+                    g[boost::graph_bundle]
+                        .user_src_f_paths.at(index_of_source_file(included_f_))
+                        .c_str();
+
+                std::cerr << "included included " << included_path_
+                          << std::endl;
+
+                std::string contents_;
+                {
+                  std::ifstream ifs(included_path_);
+                  if (!ifs.is_open())
+                    abort();
+
+                  std::stringstream buffer;
+                  buffer << ifs.rdbuf();
+
+                  contents_ = buffer.str();
+                }
+
+                size_t newlinePos_ = contents.find('\n', pos_);
+                if (newlinePos_ == std::string::npos)
+                  continue;
+
+                // Replace from pos to newline (including the newline character)
+                contents.replace(pos_, newlinePos_ - pos_ + 1, contents_);
+                break;
+              }
+
+              break;
+            }
+
+            // Replace from pos to newline (including the newline character)
+            src.replace(pos, newlinePos - pos + 1, contents);
           }
         }
-	o << src << endl << endl;
+        o << src << endl << endl;
       }
     }
   }
