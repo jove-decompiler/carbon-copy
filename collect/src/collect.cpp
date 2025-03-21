@@ -519,8 +519,17 @@ void collector_priv::inclusion(const clang_full_source_location_t &include,
   auto intervl = boost::icl::discrete_interval<source_location_t>::right_open(
       include.pos, include.pos + 1);
   auto preexist_it = src_rng_to_vert_map.find(intervl);
-  if (preexist_it == src_rng_to_vert_map.end())
+  if (preexist_it == src_rng_to_vert_map.end()) {
+    auto entire_it = src_rng_to_vert_map.find(location_entire_file_beg);
+
+    assert(entire_it != src_rng_to_vert_map.end());
+    assert((*entire_it).second.size() == 1);
+
+    auto entire_v = *(*entire_it).second.begin();
+    res[entire_v].includes.emplace(include.pos, included_f);
+
     return;
+  }
 
   if (debugMode)
     llvm::errs() << llvm::formatv("#include of \"{0}\" in code {1}\n",
