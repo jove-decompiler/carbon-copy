@@ -989,6 +989,9 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
   int beg = cl_src_rng.beg;
   int end = cl_src_rng.end;
 
+  const int beg_ = beg;
+  const int end_ = end;
+
   int N = static_cast<int>(SM.getBufferData(cl_src_rng.f).size());
 
   bool normalized = false;
@@ -1012,10 +1015,12 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
 
   os << ' ';
 
-  if (normalized)
-    os << '#' << ' ';
+  os << beg_ << ':' << end_;
 
-  os << beg << ':' << end;
+  if (normalized) {
+    os << ' ' << beg << ':' << end;
+  }
+
   os << ']';
 
   return os;
