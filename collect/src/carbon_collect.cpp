@@ -56,7 +56,7 @@ template <bool SingleChar = false>
 static clang_source_range_t clang_source_range(const SourceRange &);
 static clang_full_source_location_t
 clang_full_source_location(const SourceLocation &);
-SourceManager *gl_SM;
+static SourceManager *gl_SM;
 
 static bool isSourceRangeSensible(const SourceRange& SR) {
   assert(gl_SM);

@@ -351,8 +351,6 @@ void collector_priv::follow_users_of(
   }
 }
 
-extern clang::SourceManager *gl_SM;
-
 void collector_priv::code(clang_source_range_t cl_src_range) {
   if (!cl_src_range)
     return;
