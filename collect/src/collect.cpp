@@ -18,6 +18,8 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/FormatVariadic.h>
 
+#include <clang/Basic/SourceManager.h>
+
 using namespace std;
 namespace fs = boost::filesystem;
 
@@ -100,7 +102,7 @@ struct collector_priv {
 
   string path_of_source_file(const source_file_t &);
 
-  void code(const clang_source_range_t &cl_src_range);
+  void code(clang_source_range_t);
 
   void use(const clang_source_range_t &user_cl_src_rng,
            const clang_source_range_t &usee_cl_src_rng);
@@ -349,7 +351,13 @@ void collector_priv::follow_users_of(
   }
 }
 
-void collector_priv::code(const clang_source_range_t &cl_src_range) {
+extern clang::SourceManager *gl_SM;
+
+void collector_priv::code(clang_source_range_t cl_src_range) {
+  if (!cl_src_range)
+    return;
+
+  auto do_code = [&](void) -> void {
   source_range_t src_rng(map_clang_source_range(cl_src_range));
   auto intervl = interval_of_source_range(src_rng);
 
@@ -361,14 +369,16 @@ void collector_priv::code(const clang_source_range_t &cl_src_range) {
   //
   auto preexist_it = src_rng_to_vert_map.find(intervl);
   if (preexist_it == src_rng_to_vert_map.end()) {
+    //
     // no overlapping source range
-
+    //
     depends_vertex_t v = boost::add_vertex(res);
     res[v] = src_rng;
     depends_vertex_set_t v_container;
     v_container.insert(v);
 
     src_rng_to_vert_map.add(make_pair(intervl, v_container));
+
     return;
   }
 
@@ -379,6 +389,7 @@ void collector_priv::code(const clang_source_range_t &cl_src_range) {
     if (debugMode)
       llvm::errs() << path_of_source_file(src_rng.f) << ' '
                    << (*preexist_it).first << " ⊇ " << intervl << '\n';
+
     return;
   }
 
@@ -504,6 +515,11 @@ void collector_priv::code(const clang_source_range_t &cl_src_range) {
 
   if (debugMode)
     llvm::errs() << "  " << intervl << '\n';
+  };
+
+  do_code();
+
+  __attribute__((musttail)) return this->code(--cl_src_range);
 }
 
 static unordered_map<source_file_t, set<clang_full_source_location_t>> ifdefs;

@@ -29,6 +29,12 @@ struct clang_source_range_t {
   clang_source_file_t f;
   clang_source_location_t beg;
   clang_source_location_t end;
+
+  explicit operator bool(void) const {
+    return end > beg && beg >= 0;
+  }
+
+  clang_source_range_t &operator--(void);
 };
 
 struct clang_full_source_location_t {

@@ -56,7 +56,7 @@ template <bool SingleChar = false>
 static clang_source_range_t clang_source_range(const SourceRange &);
 static clang_full_source_location_t
 clang_full_source_location(const SourceLocation &);
-static SourceManager *gl_SM;
+SourceManager *gl_SM;
 
 static bool isSourceRangeSensible(const SourceRange& SR) {
   assert(gl_SM);
@@ -1026,7 +1026,21 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
   return os;
 }
 
+clang_source_range_t &clang_source_range_t::operator--(void) {
+  assert(gl_SM);
+  SourceManager &SM = *gl_SM;
+
+  int diff = this->end - this->beg;
+  assert(diff > 0);
+
+  this->beg -= SM.getBufferData(this->f).size();
+  this->end = this->beg + diff;
+
+  return *this;
+}
+
 static bool _isSourceRangeSensible(const SourceRange &SR) {
+  assert(gl_SM);
   SourceManager &SM = *gl_SM;
 
   pair<FileID, unsigned> beg = SM.getDecomposedExpansionLoc(SR.getBegin());
