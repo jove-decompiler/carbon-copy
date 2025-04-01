@@ -440,8 +440,22 @@ parse_command_line_arguments(int argc, char **argv) {
           continue;
 
         fs::path carb_path = fs::canonical(dir_itr->path());
+        std::string ext = carb_path.extension().string();
+
+        if (ext != ".carbon") {
+          if (ext != ".cc")
+            cerr << "unknown file extension " << ext << '\n';
+          continue;
+        }
+
         depends_t dep;
-        read_collection_file(dep, carb_path);
+
+        try {
+          read_collection_file(dep, carb_path);
+        } catch (...) {
+          cerr << "WARNING: could not open \"" << carb_path << '\"' << endl;
+          continue;
+        }
 
         bool is_glbl = dep[boost::graph_bundle].glbl_defs.find(s) !=
                        dep[boost::graph_bundle].glbl_defs.end();
