@@ -893,37 +893,39 @@ void collector::write_carbon_output() {
 
   std::string path_to_carbon = carbon_src.string() + ".carbon";
 
-  //
-  // atomically write .carbon via rename(2)
-  //
-  std::string path_to_carbon_ = path_to_carbon + ".XXXXXX";
-
   {
-    int fd = ::mkstemp(const_cast<char *>(path_to_carbon_.c_str()));
-    if (fd < 0)
-      throw std::runtime_error(std::string("mkstemp failed: ") +
-                               strerror(errno));
+    //
+    // atomically write .carbon via rename(2)
+    //
+    std::string path_to_carbon_ = path_to_carbon + ".XXXXXX";
 
-    ::close(fd);
-  }
-
-  {
-    ofstream ofs(path_to_carbon_);
     {
-#ifdef CARBON_BINARY
-      boost::archive::binary_oarchive oa(ofs);
-#else
-      boost::archive::text_oarchive oa(ofs);
-#endif
-      oa << priv->res;
-    }
-  }
+      int fd = ::mkstemp(const_cast<char *>(path_to_carbon_.c_str()));
+      if (fd < 0)
+        throw std::runtime_error(std::string("mkstemp failed: ") +
+                                 strerror(errno));
 
-  if (::rename(path_to_carbon_.c_str(), path_to_carbon.c_str()) < 0) {
-    int err = errno;
-    llvm::errs() << llvm::formatv("rename of {0} to {1} failed: {2}\n",
-                                  path_to_carbon_.c_str(),
-                                  path_to_carbon.c_str(), strerror(err));
+      ::close(fd);
+    }
+
+    {
+      ofstream ofs(path_to_carbon_);
+      {
+#ifdef CARBON_BINARY
+        boost::archive::binary_oarchive oa(ofs);
+#else
+        boost::archive::text_oarchive oa(ofs);
+#endif
+        oa << priv->res;
+      }
+    }
+
+    if (::rename(path_to_carbon_.c_str(), path_to_carbon.c_str()) < 0) {
+      int err = errno;
+      llvm::errs() << llvm::formatv("rename of {0} to {1} failed: {2}\n",
+                                    path_to_carbon_.c_str(),
+                                    path_to_carbon.c_str(), strerror(err));
+    }
   }
 
   fs::path carbon_symbol_table = carbon_dir / ".cc";
