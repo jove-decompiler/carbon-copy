@@ -891,7 +891,7 @@ void collector::write_carbon_output() {
 
   fs::create_directories(carbon_src.parent_path());
 
-  std::string path_to_carbon = carbon_src.string() + ".carbon";
+  const std::string path_to_carbon = carbon_src.string() + ".carbon";
 
   {
     //
