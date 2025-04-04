@@ -57,8 +57,6 @@ set<code_t> reachable_code(unordered_set<code_t> &out,
                            const depends_t &g,
                            const code_location_list_t &cll,
                            const global_symbol_list_t &gsl, bool only_tys) {
-  set<code_t> res;
-
   cerr << "computing dependency subgraph" << endl;
 
   set<depends_vertex_t> verts;
@@ -120,7 +118,6 @@ set<code_t> reachable_code(unordered_set<code_t> &out,
          << ")" << endl;
 #endif
 
-    res.insert(v);
     verts.insert(v);
     targets.insert(v);
   }
@@ -182,10 +179,8 @@ set<code_t> reachable_code(unordered_set<code_t> &out,
     cerr << "symbol " << gs << " not found (skipping) " << endl;
   }
 
-  if (verts.empty()) {
-    cerr << "failed to extract code" << endl;
-    exit(1);
-  }
+  if (verts.empty())
+    return verts;
 
   //
   // search the graph from every vertex, recording which vertices are seen by
@@ -279,7 +274,7 @@ set<code_t> reachable_code(unordered_set<code_t> &out,
   cerr << "removed duplicate static definitions." << endl;
 #endif
 
-  return res;
+  return verts;
 }
 
 static void vertex_interval_maps_of_graph(

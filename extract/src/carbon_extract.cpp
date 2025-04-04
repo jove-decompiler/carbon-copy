@@ -23,7 +23,7 @@ typedef boost::format fmt;
 
 static tuple<fs::path, collection_sources_t, code_location_list_t,
              global_symbol_list_t, vector<fs::path>, int, bool, bool, bool,
-             bool, bool, bool>
+             bool, bool, bool, bool>
 parse_command_line_arguments(int argc, char **argv);
 
 int main(int argc, char **argv) {
@@ -38,14 +38,27 @@ int main(int argc, char **argv) {
   bool graphviz;
   bool syst_code;
   bool flatten;
+  bool notfound_empty;
   bool debug;
 
   //
   // parse command line
   //
   tie(ofp, clc_files, desired_code_locs, desired_glbs, exclude_dirs, verb,
-      only_tys, notarget, graphviz, syst_code, flatten, debug) =
+      only_tys, notarget, graphviz, syst_code, flatten, notfound_empty, debug) =
       parse_command_line_arguments(argc, argv);
+
+  std::unique_ptr<ofstream> ofs;
+
+  auto out = [&](void) -> ostream & {
+    if (ofp.empty())
+      return cout;
+
+    if (!ofs)
+      ofs = std::make_unique<ofstream>(ofp.string());
+
+    return *ofs;
+  };
 
   //
   // take every collection for each source file, and merge (link) them together
@@ -61,6 +74,15 @@ int main(int argc, char **argv) {
   unordered_set<code_t> targets;
   set<code_t> desired_code = reachable_code(
       reachable, targets, g, desired_code_locs, desired_glbs, only_tys);
+
+  if (desired_code.empty()) {
+    if (notfound_empty) {
+      out() << "//\n// NOTFOUND\n//";
+      return 0;
+    }
+
+    return 1;
+  }
 
   //
   // output graph visualization if requested
@@ -91,11 +113,6 @@ int main(int argc, char **argv) {
   //
   // print code
   //
-  std::unique_ptr<ofstream> ofs;
-
-  ostream &o =
-      ofp.empty() ? cout : *(ofs = std::make_unique<ofstream>(ofp.string()));
-
   auto& incs = g[boost::graph_bundle].include.dirs;
 
   unordered_set<string> sys_hdrs_incl;
@@ -124,10 +141,10 @@ int main(int argc, char **argv) {
         }
       } while (!sys_hdr_path.empty());
 
-      o << "#include <" << sys_hdr << '>' << endl << endl;
+      out() << "#include <" << sys_hdr << '>' << endl << endl;
     } else {
       if (debug)
-        o << "/* " << c_reader.debug_source_description(c) << " */" << endl;
+        out() << "/* " << c_reader.debug_source_description(c) << " */" << endl;
 
       std::string src(c_reader.source_text(c));
       if (!src.empty()) {
@@ -217,7 +234,7 @@ int main(int argc, char **argv) {
             src.replace(pos, newlinePos - pos + 1, contents);
           }
         }
-        o << src << endl << endl;
+        out() << src << endl << endl;
       }
     }
   }
@@ -253,7 +270,8 @@ static int line_number_to_offset(const fs::path& p, int lnno) {
 }
 
 tuple<fs::path, collection_sources_t, code_location_list_t,
-      global_symbol_list_t, vector<fs::path>, int, bool, bool, bool, bool, bool, bool>
+      global_symbol_list_t, vector<fs::path>, int, bool, bool, bool,
+      bool, bool, bool, bool>
 parse_command_line_arguments(int argc, char **argv) {
   fs::path root_src_dir;
   fs::path root_bin_dir;
@@ -272,6 +290,7 @@ parse_command_line_arguments(int argc, char **argv) {
   bool graphviz;
   bool syst_code;
   bool flatten;
+  bool notfound_empty;
   bool debug;
 
   try {
@@ -313,6 +332,9 @@ parse_command_line_arguments(int argc, char **argv) {
 
       ("graphviz,g", "output graphviz file")
 
+      ("notfound-empty,e", "when desired code is not found, output empty source"
+                           "with comment stating that code was not found")
+
       ("sys-code,s", "inline code from system header files")
 
       ("flatten", "expand #include's")
@@ -339,6 +361,7 @@ parse_command_line_arguments(int argc, char **argv) {
     syst_code = vm.count("sys-code") != 0;
     flatten = vm.count("flatten") != 0;
     from_all = vm.count("from-all") != 0;
+    notfound_empty = vm.count("notfound-empty") != 0;
     debug = vm.count("debug") != 0;
   } catch (exception &e) {
     cerr << e.what() << endl;
@@ -508,5 +531,5 @@ parse_command_line_arguments(int argc, char **argv) {
   }
 
   return make_tuple(ofp, cfl, cll, gsl, exclude_dirs, verb, only_tys, notarget,
-                    graphviz, syst_code, flatten, debug);
+                    graphviz, syst_code, flatten, notfound_empty, debug);
 }
