@@ -931,7 +931,7 @@ void collector::write_carbon_output() {
   fs::path carbon_symbol_table = carbon_dir / ".cc";
   cc_file_t syms_file(
       boost::interprocess::open_or_create, carbon_symbol_table.c_str(),
-      1u << 30 /* 1GiB */);
+      1ull << 34 /* 16GiB */);
 
   cc_syms_t &syms = *syms_file.find_or_construct<cc_syms_t>("cc_syms")(
       syms_file.get_segment_manager());
