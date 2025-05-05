@@ -931,34 +931,44 @@ void collector::write_carbon_output() {
   fs::path carbon_symbol_table = carbon_dir / ".cc";
   cc_file_t syms_file(
       boost::interprocess::open_or_create, carbon_symbol_table.c_str(),
-      1ull << 34 /* 16GiB */);
+      1ull << 29 /* 512MiB */);
 
   cc_syms_t &syms = *syms_file.find_or_construct<cc_syms_t>("cc_syms")(
       syms_file.get_segment_manager());
 
+  auto some_string = [&](const std::string &something) -> const ip_string & {
+    ip_string ip_something(syms_file.get_segment_manager());
+    to_ips(ip_something, something);
+
+    const ip_string *TheStrPtr = nullptr;
+
+    auto grab = [&](const ip_string &TheStrRef) -> void {
+      TheStrPtr = &TheStrRef;
+    };
+
+    syms.strs.insert_and_cvisit(boost::move(ip_something), grab, grab);
+
+    assert(TheStrPtr);
+    return *TheStrPtr;
+  };
+
   auto something_def = [&](const std::string &something) -> void {
+    const ip_string &ip_path_to_carbon = some_string(path_to_carbon);
+
     cc_carbs_t carbs(syms_file.get_segment_manager());
+    carbs.set.insert(ip_path_to_carbon.c_str());
 
-    {
-      ip_string ip_carbon_src(syms_file.get_segment_manager());
-      to_ips(ip_carbon_src, path_to_carbon);
-
-      carbs.insert(boost::move(ip_carbon_src));
-    }
-
-    ip_string ip_sym(syms_file.get_segment_manager());
-    to_ips(ip_sym, something);
-
-    syms.emplace_or_visit(
-        boost::move(ip_sym),
+    syms.strm.emplace_or_visit(
+        some_string(something).c_str(),
         boost::move(carbs),
-        [&](typename cc_syms_t::value_type &x) -> void {
-          ip_string ip_carbon_src(syms_file.get_segment_manager());
-          to_ips(ip_carbon_src, path_to_carbon);
+        [&](typename cc_map_t::value_type &x) -> void {
+          cc_carbs_t &carbs = x.second;
 
-          x.second.insert_or_cvisit(
-              boost::move(ip_carbon_src),
-              [&](const typename cc_carbs_t::value_type &x) -> void {});
+          {
+            auto e_lck = carbs.exclusive_access();
+
+            carbs.set.insert(ip_path_to_carbon.c_str());
+          }
         });
   };
 

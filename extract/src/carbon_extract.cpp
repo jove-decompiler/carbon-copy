@@ -438,22 +438,23 @@ parse_command_line_arguments(int argc, char **argv) {
     if (colpos == string::npos) {
       gsl.push_back(s);
 
-      if (!(psyms && psyms->cvisit(
-            s.c_str(), [&](const typename cc_syms_t::value_type &x) -> void {
+      if (!(psyms && psyms->strm.cvisit(
+            s.c_str(), [&](const typename cc_map_t::value_type &x) -> void {
               const cc_carbs_t &carbs = x.second;
 
               cerr << "found (maybe static) global " << s << " in\n";
 
-              carbs.cvisit_all(
-                  [&](const typename cc_carbs_t::value_type &x) -> void {
-                    cerr << "  " << x.c_str() << '\n';
-                  });
+              {
+                auto s_lck = carbs.shared_access();
+                auto &set = carbs.set;
 
-              carbs.cvisit_while(
-                  [&](const typename cc_carbs_t::value_type &x) -> bool {
-                    cfl.second.insert(x.c_str());
-                    return false;
-                  });
+                assert(!set.empty());
+
+                for (ip_cstr_t x : set)
+                  cerr << "  " << x.get() << '\n';
+
+                cfl.second.insert((*set.begin()).get());
+              }
             }) > 0)) {
       // find source file where global is defined.
       fs::recursive_directory_iterator end_iter;

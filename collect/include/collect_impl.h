@@ -1,10 +1,17 @@
 #pragma once
-#include <boost/graph/adjacency_list.hpp>
 #include <boost/container/scoped_allocator.hpp>
+#include <boost/graph/adjacency_list.hpp>
+#include <boost/interprocess/containers/set.hpp>
 #include <boost/interprocess/containers/string.hpp>
 #include <boost/interprocess/managed_mapped_file.hpp>
+#include <boost/interprocess/sync/interprocess_sharable_mutex.hpp>
+#include <boost/interprocess/allocators/node_allocator.hpp>
 #include <boost/unordered/concurrent_flat_map.hpp>
 #include <boost/unordered/concurrent_flat_set.hpp>
+#include <boost/unordered/concurrent_node_set.hpp>
+#include <boost/interprocess/sync/scoped_lock.hpp>
+#include <boost/interprocess/sync/sharable_lock.hpp>
+#include <boost/unordered/concurrent_node_map.hpp>
 #include <string>
 
 namespace carbon {
@@ -133,13 +140,66 @@ typedef boost::interprocess::basic_string<char, std::char_traits<char>,
                                           ip_char_allocator>
     ip_string;
 
-struct ip_string_hash_t  {
+static inline std::string un_ips(const ip_string &x) {
+  std::string res;
+  res.reserve(x.size());
+  std::copy(x.begin(), x.end(), std::back_inserter(res));
+  return res;
+}
+
+static inline ip_string &to_ips(ip_string &res, std::string_view x) {
+  res.clear();
+  res.reserve(x.size());
+  std::copy(x.begin(), x.end(), std::back_inserter(res));
+  return res;
+}
+
+typedef boost::interprocess::offset_ptr<const char> ip_cstr_t;
+
+struct ip_cstr_hash_t {
   using is_transparent = void;
+
+  std::size_t
+  operator()(const ip_cstr_t &x) const noexcept {
+    return boost::hash<std::string_view>()(x.get());
+  }
 
   template <typename A>
   std::size_t operator()(
       const boost::interprocess::basic_string<char, std::char_traits<char>, A>
-          &str) const noexcept {
+          &x) const noexcept {
+    return std::hash<std::string_view>{}(std::string_view(x.data(), x.size()));
+  }
+};
+
+struct ip_cstr_equal_t {
+  using is_transparent = void;
+
+  bool operator()(const ip_cstr_t &lhs,
+                  const char *rhs) const noexcept {
+    return std::string_view(lhs.get()) == std::string_view(rhs);
+  }
+
+  bool operator()(const ip_cstr_t &lhs,
+                  const ip_cstr_t &rhs) const noexcept {
+    return std::string_view(lhs.get()) == std::string_view(rhs.get());
+  }
+
+  template <typename A>
+  bool operator()(
+      const ip_cstr_t &lhs,
+      const boost::interprocess::basic_string<char, std::char_traits<char>, A>
+          &rhs) const noexcept {
+    return std::string_view(lhs.get()) ==
+           std::string_view(rhs.data(), rhs.size());
+  }
+};
+
+struct ip_string_hash_t  {
+  using is_transparent = void;
+
+  template <typename A>
+  std::size_t operator()(const boost::interprocess::basic_string<char, std::char_traits<char>, A> &str) const noexcept {
     return std::hash<std::string_view>{}(std::string_view(str.data(), str.size()));
   }
 
@@ -191,36 +251,74 @@ struct ip_string_equal_t {
     return lhs == rhs;
   }
 
-  bool operator()(std::string_view lhs, const char *rhs) const noexcept {
+  bool operator()(std::string_view lhs, const char* rhs) const noexcept {
     return lhs == rhs;
   }
 
-  bool operator()(const char *lhs, std::string_view rhs) const noexcept {
+  bool operator()(const char* lhs, std::string_view rhs) const noexcept {
     return lhs == rhs;
   }
 };
 
-static inline std::string un_ips(const ip_string &x) {
-  std::string res;
-  res.reserve(x.size());
-  std::copy(x.begin(), x.end(), std::back_inserter(res));
-  return res;
-}
-
-static inline ip_string &to_ips(ip_string &res, std::string_view x) {
-  res.clear();
-  res.reserve(x.size());
-  std::copy(x.begin(), x.end(), std::back_inserter(res));
-  return res;
-}
-
-using cc_carbs_t = boost::concurrent_flat_set<
+using cc_strs_t = boost::concurrent_node_set<
     ip_string, ip_string_hash_t, ip_string_equal_t,
     boost::container::scoped_allocator_adaptor<
         boost::interprocess::allocator<ip_string, segment_manager_t>>>;
 
-using cc_syms_t = boost::concurrent_flat_map<
-    ip_string, cc_carbs_t, ip_string_hash_t, ip_string_equal_t,
+typedef boost::interprocess::interprocess_sharable_mutex ip_sharable_mutex;
+
+template <typename Mutex>
+using ip_sharable_lock = boost::interprocess::sharable_lock<Mutex>;
+template <typename Mutex>
+using ip_scoped_lock = boost::interprocess::scoped_lock<Mutex>;
+
+struct ip_rw_accessible {
+  using mutex_type = ip_sharable_mutex;
+
+  mutable mutex_type mtx;
+
+  using shared_lock_guard = ip_sharable_lock<mutex_type>;
+  using exclusive_lock_guard = ip_scoped_lock<mutex_type>;
+
+  shared_lock_guard shared_access() const {
+    return shared_lock_guard{mtx};
+  }
+  exclusive_lock_guard exclusive_access() const {
+    return exclusive_lock_guard{mtx};
+  }
+
+  ip_rw_accessible() noexcept {}
+  ip_rw_accessible(ip_rw_accessible &&) noexcept {}
+  ip_rw_accessible &operator=(ip_rw_accessible &&other) noexcept {
+    return *this;
+  }
+  ip_rw_accessible(const ip_rw_accessible &) noexcept {}
+  ip_rw_accessible &operator=(const ip_rw_accessible &) noexcept {
+    return *this;
+  }
+};
+
+struct cc_carbs_t : public ip_rw_accessible {
+  boost::interprocess::set<
+      ip_cstr_t, std::less<ip_cstr_t>,
+      boost::interprocess::node_allocator<ip_cstr_t, segment_manager_t>> set;
+
+  cc_carbs_t(segment_manager_t *segment_manager) noexcept
+      : set(segment_manager) {}
+};
+
+using cc_map_t = boost::concurrent_node_map<
+    ip_cstr_t, cc_carbs_t, ip_cstr_hash_t, ip_cstr_equal_t,
     boost::container::scoped_allocator_adaptor<boost::interprocess::allocator<
-        std::pair<const ip_string, cc_carbs_t>, segment_manager_t>>>;
+        std::pair<const ip_cstr_t, cc_carbs_t>, segment_manager_t>>>;
+
+struct cc_syms_t {
+  cc_strs_t strs;
+  cc_map_t strm;
+
+  cc_syms_t(segment_manager_t *segment_manager) noexcept
+      : strs(segment_manager),
+        strm(segment_manager) {}
+};
+
 }
