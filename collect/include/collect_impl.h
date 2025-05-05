@@ -309,8 +309,8 @@ struct cc_carbs_t : public ip_rw_accessible {
 
 using cc_map_t = boost::concurrent_node_map<
     ip_cstr_t, cc_carbs_t, ip_cstr_hash_t, ip_cstr_equal_t,
-    boost::container::scoped_allocator_adaptor<boost::interprocess::allocator<
-        std::pair<const ip_cstr_t, cc_carbs_t>, segment_manager_t>>>;
+    boost::interprocess::node_allocator<std::pair<const ip_cstr_t, cc_carbs_t>,
+                                        segment_manager_t>>;
 
 struct cc_syms_t {
   cc_strs_t strs;
