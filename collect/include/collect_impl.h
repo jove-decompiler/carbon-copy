@@ -262,8 +262,7 @@ struct ip_string_equal_t {
 
 using cc_strs_t = boost::concurrent_node_set<
     ip_string, ip_string_hash_t, ip_string_equal_t,
-    boost::container::scoped_allocator_adaptor<
-        boost::interprocess::allocator<ip_string, segment_manager_t>>>;
+    boost::interprocess::node_allocator<ip_string, segment_manager_t>>;
 
 typedef boost::interprocess::interprocess_sharable_mutex ip_sharable_mutex;
 
