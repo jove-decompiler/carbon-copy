@@ -146,7 +146,7 @@ public:
     if (debugMode)
       llvm::errs() << "CallExpr\n";
 
-    needsDecl(clang_source_range(e->getSourceRange()), e->getCalleeDecl());
+    needsDecl(clang_source_range(e->getSourceRange()), e->getDirectCallee());
 
     return true;
   }
@@ -1052,6 +1052,11 @@ static bool _isSourceRangeSensible(const SourceRange &SR) {
 static void needsDecl(const clang_source_range_t &user, const Decl *D) {
   if (!D || !_isSourceRangeSensible(D->getSourceRange()))
     return;
+
+  if (auto *FD = llvm::dyn_cast<FunctionDecl>(D)) {
+    if (FD->getBuiltinID() != 0)
+      return;
+  }
 
   clang_source_range_t usee(clang_source_range(D->getSourceRange()));
 
