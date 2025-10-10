@@ -1069,8 +1069,11 @@ static void needsDecl(const clang_source_range_t &user, const Decl *D) {
     return;
 
   if (auto *FD = llvm::dyn_cast<FunctionDecl>(D)) {
-    if (FD->getBuiltinID() != 0)
+    if (FD->getBuiltinID() != 0) {
+      if (debugMode)
+        llvm::errs() << "skipping builtin " << FD->getName() << '\n';
       return;
+    }
   }
 
   clang_source_range_t usee(clang_source_range(D->getSourceRange()));
