@@ -546,10 +546,10 @@ public:
         // note symbol
         //
 
-        if (cast<FunctionDecl>(D)->getStorageClass() == SC_Static)
-          c.static_code(src_rng, FD->getName().str(), FD->hasBody());
+        if (FD->getStorageClass() == SC_Static)
+          c.static_code(src_rng, FD->getName().str(), FD->hasBody() && FD->getStorageClass() != SC_Extern);
         else
-          c.global_code(src_rng, FD->getName().str(), FD->hasBody());
+          c.global_code(src_rng, FD->getName().str(), FD->hasBody() && FD->getStorageClass() != SC_Extern);
 
         // 
         // examine return type
