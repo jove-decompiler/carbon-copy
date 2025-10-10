@@ -1068,14 +1068,6 @@ static void needsDecl(const clang_source_range_t &user, const Decl *D) {
   if (!D || !_isSourceRangeSensible(D->getSourceRange()))
     return;
 
-  if (auto *FD = llvm::dyn_cast<FunctionDecl>(D)) {
-    if (FD->getBuiltinID() != 0) {
-      if (debugMode)
-        llvm::errs() << "skipping builtin " << FD->getName() << '\n';
-      return;
-    }
-  }
-
   clang_source_range_t usee(clang_source_range(D->getSourceRange()));
 
   if (debugMode) {
@@ -1086,6 +1078,23 @@ static void needsDecl(const clang_source_range_t &user, const Decl *D) {
         llvm::errs() << '\"' << ND->getName() << '\"' << ' ';
     }
     llvm::errs() << usee << '\n';
+  }
+
+  if (auto *FD = llvm::dyn_cast<clang::FunctionDecl>(D)) {
+    assert(gl_SM);
+    SourceManager &SM = *gl_SM;
+
+    // NOTE: skip only true compiler builtins
+    const bool isCompilerBuiltinFile = SM.isWrittenInBuiltinFile(FD->getLocation());
+    const bool isCompilerBuiltinName =
+        FD->getIdentifier() &&
+        FD->getIdentifier()->getName().starts_with("__builtin_");
+
+    if (isCompilerBuiltinFile || isCompilerBuiltinName) {
+      if (debugMode)
+        llvm::errs() << "skipping compiler builtin " << FD->getName() << '\n';
+      return;
+    }
   }
 
   c.use(user, usee);
