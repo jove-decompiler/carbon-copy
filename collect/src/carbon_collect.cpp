@@ -524,6 +524,16 @@ public:
           if (!ND->getName().empty())
             llvm::errs() << '\"' << ND->getName() << '\"';
         }
+
+        if (isa<FileScopeAsmDecl>(D)) {
+          FileScopeAsmDecl *FSAD = cast<FileScopeAsmDecl>(D);
+          const StringLiteral *AsmStr = FSAD->getAsmString();
+
+          if (AsmStr)
+            llvm::errs() << " \""
+                         << AsmStr->getString()
+                         << "\"\n";
+        }
       }
 
       clang_source_range_t src_rng = sourceRangeOfTopLevelDecl(D);
@@ -569,6 +579,11 @@ public:
 
         TypedefDecl *TD = cast<TypedefDecl>(D);
         needsType(src_rng, TD->getUnderlyingType().getTypePtrOrNull());
+      } else if (isa<FileScopeAsmDecl>(D)) {
+        FileScopeAsmDecl *FSAD = cast<FileScopeAsmDecl>(D);
+        FSAD->getAsmString();
+
+        // FIXME recognize data-emitting directives whose operand is a bare symbol
       }
 
       //
