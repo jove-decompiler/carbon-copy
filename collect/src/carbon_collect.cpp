@@ -483,6 +483,36 @@ public:
   }
 };
 
+static const TypedefNameDecl *
+getTypedefUsedInReturnType(const FunctionDecl *FD) {
+  if (auto *TSI = FD->getTypeSourceInfo()) {
+    TypeLoc TL = TSI->getTypeLoc();
+    if (auto FTL = TL.getAs<FunctionTypeLoc>()) {
+      TypeLoc RetTL = FTL.getReturnLoc();
+
+      // peel wrappers
+      for (;;) {
+        if (auto TTL = RetTL.getAs<TypedefTypeLoc>())
+          return TTL.getTypedefNameDecl();
+        if (auto PTL = RetTL.getAs<ParenTypeLoc>()) {
+          RetTL = PTL.getInnerLoc();
+          continue;
+        }
+        if (auto ATL = RetTL.getAs<AttributedTypeLoc>()) {
+          RetTL = ATL.getModifiedLoc();
+          continue;
+        }
+        if (auto ETL = RetTL.getAs<ElaboratedTypeLoc>()) {
+          RetTL = ETL.getNamedTypeLoc();
+          continue;
+        }
+        break;
+      }
+    }
+  }
+  return nullptr;
+}
+
 class CarbonCollectConsumer : public ASTConsumer {
   SourceManager &SM;
   CarbonCollectVisitor Visitor;
@@ -564,7 +594,14 @@ public:
         // 
         // examine return type
         //
-        needsType(src_rng, FD->getReturnType().getTypePtrOrNull());
+        // because of clang's redeclaration merging, we need to first try and
+        // look at the _written_ return type.
+        //
+        if (auto *TD = getTypedefUsedInReturnType(FD)) {
+          needsDecl(src_rng, TD);
+        } else {
+          needsType(src_rng, FD->getReturnType().getTypePtrOrNull());
+        }
       } else if (isa<VarDecl>(D)) {
         //
         // global symbol across object files
