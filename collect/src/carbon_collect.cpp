@@ -1,9 +1,9 @@
 #include "collect.h"
 #include "utilities_clang.h"
+
 #include <iostream>
-#include <boost/unordered/unordered_flat_set.hpp>
-#include <boost/unordered/unordered_flat_map.hpp>
 #include <sstream>
+
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Frontend/FrontendPluginRegistry.h>
@@ -12,6 +12,12 @@
 #include <clang/Basic/FileManager.h>
 #include <llvm/Support/FormatVariadic.h>
 #include <llvm/Support/WithColor.h>
+
+#include <boost/unordered/unordered_flat_set.hpp>
+#include <boost/unordered/unordered_flat_map.hpp>
+#include <boost/scope/defer.hpp>
+
+#include <signal.h>
 
 using namespace clang;
 namespace fs = boost::filesystem;
@@ -513,6 +519,19 @@ getTypedefUsedInReturnType(const FunctionDecl *FD) {
   return nullptr;
 }
 
+static inline void block_signals(std::function<void(void)> f) {
+  sigset_t sigmask, oldmask;
+
+  ::sigfillset(&sigmask);
+  ::sigprocmask(SIG_BLOCK, &sigmask, &oldmask); /* block em */
+
+  BOOST_SCOPE_DEFER [&] {
+    ::sigprocmask(SIG_SETMASK, &oldmask, nullptr); /* unblock em */
+  };
+
+  f();
+}
+
 class CarbonCollectConsumer : public ASTConsumer {
   SourceManager &SM;
   CarbonCollectVisitor Visitor;
@@ -668,7 +687,7 @@ public:
       }
     }
 
-    c.write_carbon_output();
+    block_signals([&] { c.write_carbon_output(); });
   }
 };
 

@@ -1,8 +1,14 @@
 #include "collect.h"
 #include "collect_impl.h"
-#include <set>
+
 #include <iostream>
 #include <fstream>
+#include <set>
+
+#include <clang/Basic/SourceManager.h>
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/FormatVariadic.h>
+
 #include <boost/graph/adj_list_serialize.hpp>
 #include <boost/serialization/vector.hpp>
 #include <boost/serialization/list.hpp>
@@ -15,10 +21,6 @@
 #else
 #include <boost/archive/text_oarchive.hpp>
 #endif
-#include <llvm/Support/raw_ostream.h>
-#include <llvm/Support/FormatVariadic.h>
-
-#include <clang/Basic/SourceManager.h>
 
 using namespace std;
 namespace fs = boost::filesystem;

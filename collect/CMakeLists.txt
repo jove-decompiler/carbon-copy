@@ -28,5 +28,6 @@ target_link_libraries(carbon-collect PRIVATE Boost::icl)
 target_link_libraries(carbon-collect PRIVATE Boost::filesystem)
 target_link_libraries(carbon-collect PRIVATE Boost::serialization)
 target_link_libraries(carbon-collect PRIVATE Boost::program_options)
+target_link_libraries(carbon-collect PRIVATE Boost::scope)
 
 install(TARGETS carbon-collect RUNTIME DESTINATION "${CMAKE_INSTALL_LIBDIR}")
