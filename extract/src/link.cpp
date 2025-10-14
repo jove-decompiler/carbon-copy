@@ -329,7 +329,7 @@ void link_into(
 #if 1
     auto into_it = into[boost::graph_bundle].glbl_defs.find(entry.first);
     if (into_it != into[boost::graph_bundle].glbl_defs.end()) {
-#if 0
+#if 1
       cerr << "warning: multiple definitions found for '" << entry.first << '\''
            << endl;
 #else
