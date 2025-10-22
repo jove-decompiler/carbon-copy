@@ -32,16 +32,16 @@ add_subdirectory(extract)
 # -DCARBON_USE_SYSTEM_BOOST=ON.
 option(CARBON_USE_SYSTEM_BOOST "Use system or vendored boost" OFF)
 if(CARBON_USE_SYSTEM_BOOST)
-  find_package(boost_system 1.88 REQUIRED)
-  find_package(boost_filesystem 1.88 REQUIRED)
-  find_package(boost_serialization 1.88 REQUIRED)
+  find_package(boost_system 1.89 REQUIRED)
+  find_package(boost_filesystem 1.89 REQUIRED)
+  find_package(boost_serialization 1.89 REQUIRED)
 else()
   include(FetchContent)
 
   FetchContent_Declare(
     Boost
-    URL https://github.com/boostorg/boost/releases/download/boost-1.88.0/boost-1.88.0-cmake.tar.gz
-    URL_MD5 fe33be48eeb6de4dc2fefe60a3834c1f
+    URL https://github.com/boostorg/boost/releases/download/boost-1.89.0/boost-1.89.0-cmake.tar.gz
+    URL_MD5 aaeeb6cfb86e85ce28c8f2f1fc104d75
     DOWNLOAD_EXTRACT_TIMESTAMP ON
   )
 
