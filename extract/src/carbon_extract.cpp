@@ -219,19 +219,19 @@ int main(int argc, char **argv) {
       }
     };
 
-	if (flatten && !g[c].includes.empty()) {
-	  std::vector<source_file_t> active;
+    if (flatten && !g[c].includes.empty()) {
+      std::vector<source_file_t> active;
 
-	  active.push_back(g[c].f);
+      active.push_back(g[c].f);
 
-	  flatten_includes(
-		  flatten_includes,
-		  src,
-		  g[c].includes,
-		  active);
-	}
+      flatten_includes(
+          flatten_includes,
+          src,
+          g[c].includes,
+          active);
+    }
 
-	out() << src << endl << endl;
+    out() << src << endl << endl;
   }
 
   return 0;
