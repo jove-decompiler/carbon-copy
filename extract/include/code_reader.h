@@ -20,6 +20,8 @@ public:
               const std::vector<boost::filesystem::path> &exclude_dirs = {});
   ~code_reader();
 
+  std::string complete_source_text(const source_file_t &);
+
   std::string source_text(code_t);
   std::string source_description(code_t);
   std::string debug_source_description(code_t);

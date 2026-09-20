@@ -13,6 +13,7 @@
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/program_options.hpp>
 #include <boost/format.hpp>
+#include <boost/range/adaptor/reversed.hpp>
 #include "read_collection.h"
 
 using namespace std;
@@ -142,101 +143,95 @@ int main(int argc, char **argv) {
       } while (!sys_hdr_path.empty());
 
       out() << "#include <" << sys_hdr << '>' << endl << endl;
-    } else {
+      continue;
+    }
+
       if (debug)
         out() << "/* " << c_reader.debug_source_description(c) << " */" << endl;
 
       std::string src(c_reader.source_text(c));
-      if (!src.empty()) {
-        if (flatten && !g[c].includes.empty()) {
-          for (const auto &inclusion : g[c].includes) {
-            unsigned pos;
-            source_file_t included_f;
-            std::tie(pos, included_f) = inclusion;
+    if (src.empty())
+      continue;
 
-            if (is_system_source_file(included_f))
-              continue;
+    auto flatten_includes =
+        [&](auto &&self,
+            std::string &contents,
+            const auto &inclusions,
+            std::vector<source_file_t> &active) -> void {
+      //
+      // we must replace from the end of the file toward the beginning,
+      // otherwise expanding one include would change the offsets of includes
+      // appearing after it
+      //
+      std::vector<std::pair<unsigned, source_file_t>> sorted;
 
-            size_t newlinePos = src.find('\n', pos);
-            if (newlinePos == std::string::npos)
-              continue;
+      for (const auto &inclusion : inclusions) {
+        unsigned pos;
+        source_file_t included_f;
+        std::tie(pos, included_f) = inclusion;
 
-            const char *included_path =
-                g[boost::graph_bundle]
-                    .user_src_f_paths.at(index_of_source_file(included_f))
-                    .c_str();
-
-            std::cerr << "included " << included_path << std::endl;
-
-            std::string contents;
-            {
-              std::ifstream ifs(included_path);
-              if (!ifs.is_open())
-                abort();
-
-              std::stringstream buffer;
-              buffer << ifs.rdbuf();
-
-              contents = buffer.str();
-            }
-
-            depends_t::vertex_iterator vi, vi_end;
-            for (tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi) {
-              depends_vertex_t v = *vi;
-
-              if (g[v].f != included_f)
-                continue;
-              if (g[v].beg != location_entire_file_beg ||
-                  g[v].end != location_entire_file_end)
-                continue;
-
-              for (const auto &inclusion_ : g[v].includes) {
-                unsigned pos_;
-                source_file_t included_f_;
-                std::tie(pos_, included_f_) = inclusion_;
-
-                if (is_system_source_file(included_f_))
-                  continue;
-
-                const char *included_path_ =
-                    g[boost::graph_bundle]
-                        .user_src_f_paths.at(index_of_source_file(included_f_))
-                        .c_str();
-
-                std::cerr << "included included " << included_path_
-                          << std::endl;
-
-                std::string contents_;
-                {
-                  std::ifstream ifs(included_path_);
-                  if (!ifs.is_open())
-                    abort();
-
-                  std::stringstream buffer;
-                  buffer << ifs.rdbuf();
-
-                  contents_ = buffer.str();
-                }
-
-                size_t newlinePos_ = contents.find('\n', pos_);
-                if (newlinePos_ == std::string::npos)
-                  continue;
-
-                // Replace from pos to newline (including the newline character)
-                contents.replace(pos_, newlinePos_ - pos_ + 1, contents_);
-                break;
-              }
-
-              break;
-            }
-
-            // Replace from pos to newline (including the newline character)
-            src.replace(pos, newlinePos - pos + 1, contents);
-          }
-        }
-        out() << src << endl << endl;
+        sorted.emplace_back(pos, included_f);
       }
-    }
+
+      std::sort(sorted.begin(), sorted.end());
+      for (const auto &[pos, included_f] : boost::adaptors::reverse(sorted)) {
+        if (is_system_source_file(included_f))
+          continue;
+
+        if (pos >= contents.size())
+          continue;
+
+        size_t newlinePos = contents.find('\n', pos);
+        if (newlinePos == std::string::npos)
+          continue;
+
+        //
+        // Prevent pathological recursive include loops.
+        //
+        if (std::find(active.begin(), active.end(), included_f) != active.end())
+          continue;
+
+        std::string included_contents = c_reader.complete_source_text(included_f);
+
+        //
+        // If we know about the entire included file, recursively flatten
+        // its includes before inserting it into the parent.
+        //
+        if (auto v = entire_file_vertex(g, included_f)) {
+          active.push_back(included_f);
+
+          self(self,
+               included_contents,
+               g[*v].includes,
+               active);
+
+          active.pop_back();
+        }
+
+        //
+        // Because we're working backwards through the source positions,
+        // this replacement cannot invalidate any positions we haven't
+        // processed yet.
+        //
+        contents.replace(pos,
+                         newlinePos - pos + 1,
+                         included_contents);
+      }
+    };
+
+	if (flatten && !g[c].includes.empty()) {
+	  std::vector<source_file_t> active;
+
+	  active.push_back(g[c].f);
+
+	  flatten_includes(
+		  flatten_includes,
+		  src,
+		  g[c].includes,
+		  active);
+	}
+
+	out() << src << endl << endl;
   }
 
   return 0;
@@ -372,7 +367,7 @@ parse_command_line_arguments(int argc, char **argv) {
 
   fs::path carbon_dir(root_bin_dir / ".carbon");
   if (!fs::is_directory(carbon_dir)) {
-    cerr << "carbon data not found in " << root_src_dir << endl;
+    cerr << "carbon data not found in " << root_bin_dir << endl;
     exit(1);
   }
 

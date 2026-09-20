@@ -127,6 +127,25 @@ typedef boost::adjacency_list<
 typedef depends_t::vertex_descriptor depends_vertex_t;
 typedef depends_t::edge_descriptor depends_edge_t;
 
+static inline std::optional<depends_vertex_t>
+entire_file_vertex(depends_t &g, source_file_t f) {
+  depends_t::vertex_iterator vi, vi_end;
+  for (tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi) {
+    depends_vertex_t V = *vi;
+
+    if (g[V].f != f)
+      continue;
+
+    if (g[V].beg != location_entire_file_beg ||
+        g[V].end != location_entire_file_end)
+      continue;
+
+    return V;
+  }
+
+  return std::nullopt;
+}
+
 //
 // symbol table (.cc)
 //

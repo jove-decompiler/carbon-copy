@@ -115,6 +115,29 @@ bool code_reader::is_path_excluded(
   return false;
 }
 
+std::string code_reader::complete_source_text(const source_file_t &f) {
+  auto &paths = is_system_source_file(f)
+                    ? g[boost::graph_bundle].syst_src_f_paths
+                    : g[boost::graph_bundle].user_src_f_paths;
+
+  const std::string &path = paths.at(index_of_source_file(f));
+
+  if (is_path_excluded(path))
+    return "";
+
+  ifstream is(path);
+  if (!is) {
+    cerr << "error: could not read " << path << endl;
+    print_istream_error(is);
+    exit(1);
+  }
+
+  std::stringstream buffer;
+  buffer << is.rdbuf();
+
+  return buffer.str();
+}
+
 string code_reader::source_text(code_t c) {
   const source_range_t &src_rng = g[c];
 
