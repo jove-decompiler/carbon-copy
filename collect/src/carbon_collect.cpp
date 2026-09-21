@@ -570,8 +570,12 @@ public:
 
         if (isa<NamedDecl>(D)) {
           NamedDecl *ND = cast<NamedDecl>(D);
-          if (!ND->getName().empty())
+          if (ND->getName().empty()) {
+            // wtf?
+            return true;
+          } else {
             llvm::errs() << '\"' << ND->getName() << '\"';
+          }
         }
 
         if (isa<FileScopeAsmDecl>(D)) {
