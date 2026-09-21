@@ -819,7 +819,17 @@ struct UniqueIDHash {
   }
 };
 
-/// Note: SM assigns unique FileID's for each unique \#include chain.
+//
+// clang gives a distinct FileID for each inclusion chain. FileMultMap assigns
+// each FileID for the same physical UniqueID its own offset band.
+//
+// so if foo.inc is 1000 bytes and gets included three different ways, the
+// source_location_t's end up like this:
+//
+// FileID A: [0,    1000)
+// FileID B: [1000, 2000)
+// FileID C: [2000, 3000)
+//
 static unordered_map<llvm::sys::fs::UniqueID, MultipliersForFileIDs,
                      UniqueIDHash>
     FileMultMap;

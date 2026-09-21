@@ -16,7 +16,9 @@
 
 namespace carbon {
 
-// byte offset into source file
+//
+// modulo the size of the file, this number is a byte offset into the source.
+//
 typedef int32_t source_location_t;
 
 // if positive, is index into sources
