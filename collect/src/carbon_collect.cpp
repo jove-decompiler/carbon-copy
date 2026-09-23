@@ -861,23 +861,148 @@ clang_full_source_location_t clang_full_source_location(const SourceLocation &Lo
   return {info.first, static_cast<clang_source_location_t>(info.second)};
 }
 
+static void dumpLoc(SourceManager &SM,
+                    const char *name,
+                    SourceLocation Loc) {
+  llvm::errs() << name << ":\n";
+
+  unsigned depth = 0;
+
+  while (Loc.isMacroID()) {
+    llvm::errs()
+        << "  [" << depth++ << "] "
+        << Loc.printToString(SM)
+        << " spelling="
+        << SM.getSpellingLoc(Loc).printToString(SM)
+        << '\n';
+
+    Loc = SM.getImmediateExpansionRange(Loc).getBegin();
+  }
+
+  llvm::errs()
+      << "  file: " << Loc.printToString(SM) << '\n';
+}
+
+static void dumpIncludeStack(SourceManager &SM, SourceLocation Loc) {
+  Loc = SM.getExpansionLoc(Loc);
+
+  FileID FID = SM.getFileID(Loc);
+
+  llvm::errs() << "include stack:\n";
+
+  while (!FID.isInvalid()) {
+    const FileEntry *FE = SM.getFileEntryForID(FID);
+
+    llvm::errs() << "  ";
+    if (FE)
+      llvm::errs() << FE->tryGetRealPathName();
+    else
+      llvm::errs() << "<no FileEntry>";
+
+    const SrcMgr::SLocEntry &Entry = SM.getSLocEntry(FID);
+    if (!Entry.isFile()) {
+      llvm::errs() << '\n';
+      break;
+    }
+
+    SourceLocation IncludeLoc = Entry.getFile().getIncludeLoc();
+
+    if (IncludeLoc.isInvalid()) {
+      llvm::errs() << " [main file]\n";
+      break;
+    }
+
+    llvm::errs()
+        << " included at "
+        << IncludeLoc.printToString(SM)
+        << '\n';
+
+    FID = SM.getFileID(SM.getExpansionLoc(IncludeLoc));
+  }
+}
+
+static void giveUpOnSourceRange(SourceManager &SM, SourceRange SR) {
+  llvm::WithColor::error()
+      << "invalid CharSourceRange from makeFileCharRange\n";
+
+  llvm::errs()
+      << "  begin:     " << SR.getBegin().printToString(SM) << '\n'
+      << "  end:       " << SR.getEnd().printToString(SM) << '\n'
+      << "  exp-begin: "
+      << SM.getExpansionLoc(SR.getBegin()).printToString(SM) << '\n'
+      << "  exp-end:   "
+      << SM.getExpansionLoc(SR.getEnd()).printToString(SM) << '\n'
+      << "  spell-beg: "
+      << SM.getSpellingLoc(SR.getBegin()).printToString(SM) << '\n'
+      << "  spell-end: "
+      << SM.getSpellingLoc(SR.getEnd()).printToString(SM) << '\n';
+
+  dumpLoc(SM, "BEGIN", SR.getBegin());
+  dumpLoc(SM, "END", SR.getEnd());
+  dumpIncludeStack(SM, SR.getBegin());
+}
+
+//
+// 1. "Here are some Clang tokens."
+// 2. "Can you point me to the exact real letters in a file?"
+// 3. If yes: use those exact letters.
+// 4. If no because macros made the text imaginary: "Okay, give me the whole
+//    macro call that made those tokens."
+// 5. Turn that into actual character boundaries.
+// 6. Yield [first character, character just after the last one).
+//
 template <bool SingleChar>
 clang_source_range_t clang_source_range(const SourceRange &SR) {
   SourceManager &SM = *gl_SM;
+  CompilerInstance &CI = *gl_CI;
 
   FileID FID;
   int beg, end;
 
   if constexpr (SingleChar) {
-    pair<FileID, unsigned> begInfo = SM.getDecomposedExpansionLoc(SR.getBegin());
+    pair<FileID, unsigned> begInfo =
+        SM.getDecomposedExpansionLoc(SR.getBegin());
 
     FID = begInfo.first;
 
     beg = static_cast<int>(begInfo.second);
     end = beg + 1;
   } else {
-    pair<FileID, unsigned> begInfo = SM.getDecomposedExpansionLoc(SR.getBegin());
-    pair<FileID, unsigned> endInfo = SM.getDecomposedExpansionLoc(SR.getEnd());
+    // this SourceRange describes whole tokens.
+    CharSourceRange CR = CharSourceRange::getTokenRange(SR);
+
+	//
+	// retrieve the exact characters in a real file corresponding to this
+	// original AST range. this may be impossible when the range represents
+	// only part of a macro expansion.
+	//
+    CharSourceRange FileCR = Lexer::makeFileCharRange(CR, SM, CI.getLangOpts());
+
+    pair<FileID, unsigned> begInfo;
+    pair<FileID, unsigned> endInfo;
+    if (FileCR.isInvalid()) {
+      //
+      // the original range cannot be represented exactly as characters in
+      // a file. fall-back to the complete ultimate macro-expansion range
+      //
+      CharSourceRange ExpCR = SM.getExpansionRange(CR);
+
+      // turn this token range into a real half-open character range
+      CharSourceRange CharCR =
+          Lexer::getAsCharRange(ExpCR, SM, CI.getLangOpts());
+      if (CharCR.isInvalid()) {
+        giveUpOnSourceRange(SM, SR);
+        abort();
+      }
+
+      // retrieve the file and byte offsets for those exact characters
+      begInfo = SM.getDecomposedLoc(CharCR.getBegin());
+      endInfo = SM.getDecomposedLoc(CharCR.getEnd());
+    } else {
+      // retrieve the file and byte offsets for those exact characters
+      begInfo = SM.getDecomposedLoc(FileCR.getBegin());
+      endInfo = SM.getDecomposedLoc(FileCR.getEnd());
+    }
 
     if (begInfo.first != endInfo.first) {
       llvm::WithColor::error() << "invalid SourceRange spans distinct files ";
@@ -901,8 +1026,11 @@ clang_source_range_t clang_source_range(const SourceRange &SR) {
     FID = begInfo.first;
 
     beg = static_cast<int>(begInfo.second);
-    end = static_cast<int>(endInfo.second) + 1;
+    end = static_cast<int>(endInfo.second);
   }
+
+  assert(!FID.isInvalid());
+  assert(SM.getFileEntryForID(FID));
 
   MultipliersForFileIDs &Mults =
       FileMultMap[SM.getFileEntryForID(FID)->getUniqueID()];
