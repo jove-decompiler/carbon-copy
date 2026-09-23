@@ -1,11 +1,16 @@
 #pragma once
+#include "fsuid.h"
+
 #include <memory>
 #include <string>
 #include <ostream>
 #include <list>
 #include <set>
 #include <boost/filesystem.hpp>
+
+#include <clang/Basic/FileEntry.h>
 #include <clang/Basic/SourceLocation.h>
+#include <clang/Basic/SourceManager.h>
 
 namespace carbon {
 
@@ -20,10 +25,13 @@ std::size_t hash_of_clang_source_file(const clang_source_file_t &);
 
 // defined in clang_collect.cpp
 struct failed_to_get_path_exception {};
+boost::filesystem::path path_of_clang_source_file(clang::FileEntryRef);
 boost::filesystem::path path_of_clang_source_file(const clang_source_file_t &);
 
-// defined in clang_collect.cpp
+// these functions are defined in clang_collect.cpp
 bool clang_is_system_source_file(const clang_source_file_t &);
+bool clang_is_system_source_file(clang::FileEntryRef);
+FSUniqueID clang_fs_unique_id(const llvm::sys::fs::UniqueID &);
 
 struct clang_source_range_t {
   clang_source_file_t f;
@@ -87,15 +95,18 @@ public:
                           const clang_source_range_t &usee);
   void follow_users_of(const clang_source_range_t &prior,
                        const clang_source_range_t &following);
+
   void inclusion(const clang_full_source_location_t &include,
-                 const clang_source_file_t &included);
+                 clang::FileEntryRef included_f);
 
   void ifdef(const clang_source_range_t &user,
              const clang_full_source_location_t &usee);
 
   void clang_source_file(const clang_source_file_t &);
+  void clang_source_file(clang::FileEntryRef);
 
   void write_carbon_output();
+  void process_inclusions(void);
 };
 
 }

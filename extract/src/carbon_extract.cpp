@@ -129,6 +129,8 @@ int main(int argc, char **argv) {
 
     if (!syst_code && is_system_code(g, c)) {
       string sys_hdr = top_level_system_header_of_code(g, c);
+      if (sys_hdr.empty())
+        continue; /* FIXME */
       if (sys_hdrs_incl.find(sys_hdr) != sys_hdrs_incl.end())
         continue;
       sys_hdrs_incl.insert(sys_hdr);

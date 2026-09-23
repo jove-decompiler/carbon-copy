@@ -8,6 +8,7 @@
 #include <clang/Basic/SourceManager.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/FormatVariadic.h>
+#include <llvm/ADT/Hashing.h>
 
 #include <boost/graph/adj_list_serialize.hpp>
 #include <boost/serialization/vector.hpp>
@@ -29,15 +30,19 @@ namespace carbon {
 
 static const bool debugMode = false;
 
+clang::SourceManager *gl_SM;
+
 static llvm::raw_ostream &
 operator<<(llvm::raw_ostream &os,
            const boost::icl::discrete_interval<source_location_t> &intervl);
 
-struct clang_source_file_hasher_t {
-  size_t operator()(const clang_source_file_t &k) const {
-    return hash_of_clang_source_file(k);
+#if 0
+struct clang_fs_hasher_t {
+  size_t operator()(const llvm::sys::fs::UniqueID &Tag) const {
+    return llvm::hash_value(std::make_pair(Tag.getDevice(), Tag.getFile()));
   }
 };
+#endif
 
 struct source_file_hasher_t {
   size_t operator()(const source_file_t &k) const {
@@ -56,6 +61,10 @@ typedef set<depends_vertex_t> depends_vertex_set_t;
 typedef boost::icl::interval_map<source_location_t, depends_vertex_set_t>
     source_ranges_to_vertex_map_t;
 
+typedef std::pair<uint64_t, uint64_t> FSUniqueID;
+
+FSUniqueID FSUniqueIDOf(void);
+
 struct collector_priv {
   //
   // to-be-serialized
@@ -67,37 +76,41 @@ struct collector_priv {
   //
   depends_context_t &depctx;
 
-  // map between clang source files and source files
-  unordered_map<clang_source_file_t, source_file_t, clang_source_file_hasher_t>
-      src_f_map;
+  unordered_map<FSUniqueID, source_file_t, boost::hash<FSUniqueID>> src_f_map;
 
+#if 0
   // map between source files and clang source files
   unordered_map<source_file_t, clang_source_file_t, source_file_hasher_t>
       cl_src_f_map;
+#endif
 
   // most important intermediary. maps from source ranges to vertices in the
   // depends graph so we can add edges upon uses
   vector<unique_ptr<source_ranges_to_vertex_map_t>> f_usr_src_rng_vert_map;
   vector<unique_ptr<source_ranges_to_vertex_map_t>> f_sys_src_rng_vert_map;
 
-  unordered_map<clang_source_file_t, unsigned, clang_source_file_hasher_t>
-      top_lvl_syst_src_idx_map;
+  // we keep a list of macro uses to apply at the close since the preprocessor
+  // will expand macros before the parser will notify of the AST's therein
+  list<pair<full_source_location_t, source_file_t>> inclusions;
 
   collector_priv() : depctx(res[boost::graph_bundle]) {}
 
   void clang_source_file(const clang_source_file_t &);
+  void clang_source_file(clang::FileEntryRef);
 
   // map clang source files to our own source files
-  source_file_t map_clang_source_file(const clang_source_file_t &clrng);
-
-  // map our own source files to clang source files
-  clang_source_file_t map_source_file(const source_file_t &clrng);
+  source_file_t map_clang_source_file(const clang_source_file_t &);
+  source_file_t map_clang_source_file(clang::FileEntryRef);
 
   // map clang source ranges to our own source ranges
   source_range_t map_clang_source_range(const clang_source_range_t &);
 
+#if 0
   // map our own source ranges to clang source ranges
+  // map our own source files to clang source files
+  clang_source_file_t map_source_file(const source_file_t &clrng);
   clang_source_range_t map_source_range(const source_range_t &);
+#endif
 
   source_ranges_to_vertex_map_t &
   source_range_vertex_map_of_source_file(const source_file_t &);
@@ -116,48 +129,56 @@ struct collector_priv {
                        const clang_source_range_t &);
 
   void inclusion(const clang_full_source_location_t &include,
-                 const clang_source_file_t &included);
+                 clang::FileEntryRef included);
 
   void ifdef(const clang_source_range_t &user,
              const clang_full_source_location_t &usee);
 
   void fixup_static_functions();
+  void process_inclusions(void);
 };
 
+static const clang::FileEntry &FileEntryForFID(const clang_source_file_t &f) {
+  clang::SourceManager *const pSM = gl_SM;
+  assert(pSM);
+  clang::SourceManager &SM = *pSM;
+
+  const clang::FileEntry *const pFE = SM.getFileEntryForID(f);
+  assert(pFE);
+  return *pFE;
+}
+
 void collector_priv::clang_source_file(const clang_source_file_t &f) {
-  auto it = src_f_map.find(f);
+  const clang::FileEntry &FE = FileEntryForFID(f);
+
+  const auto FEUID = clang_fs_unique_id(FE.getUniqueID());
+
+  const bool is_sys(clang_is_system_source_file(f));
+
+  auto it = src_f_map.find(FEUID);
   if (it == src_f_map.end()) {
-    // we need to:
-    // 1. get the canonical file path to the source file from clang
-    // 2. ask clang whether it is a system source file
-    // 3. if so, add to system source files table, otherwise regular one
-    // 4. take the index used in the previous step and save a mapping to it from
-    // our given clang source file
-    bool is_sys(clang_is_system_source_file(f));
+    vector<string> &src_f_paths =
+        is_sys ? depctx.syst_src_f_paths
+               : depctx.user_src_f_paths;
 
-    source_file_t _f;
-    if (is_sys) {
-      _f = syst_index_of_index(
-          static_cast<unsigned>(depctx.syst_src_f_paths.size()));
+    source_file_t _f =
+        is_sys ? syst_index_of_index(src_f_paths.size())
+               :                     src_f_paths.size();
 
-      depctx.syst_src_f_paths.push_back(path_of_clang_source_file(f).string());
+    src_f_paths.push_back(path_of_clang_source_file(f).string());
 
-#if 0
-      llvm::errs() << path_of_clang_source_file(f).string() << "  $$$\n";
-#endif
+    if (is_sys)
       depctx.toplvl_syst_src_f_paths.push_back(
           path_of_clang_source_file(top_level_system_header(f)).string());
-    } else {
-      _f = static_cast<source_file_t>(depctx.user_src_f_paths.size());
 
-      depctx.user_src_f_paths.push_back(path_of_clang_source_file(f).string());
-    }
-
-    src_f_map.insert({f, _f});
+    src_f_map.insert({FEUID, _f});
+#if 0
     cl_src_f_map.insert({_f, f});
+#endif
 
     auto &f_src_rng_vert_map =
-        is_sys ? f_sys_src_rng_vert_map : f_usr_src_rng_vert_map;
+        is_sys ? f_sys_src_rng_vert_map
+               : f_usr_src_rng_vert_map;
     f_src_rng_vert_map.emplace_back(new source_ranges_to_vertex_map_t);
 
     // create a vertex which denotes the entire file
@@ -174,17 +195,92 @@ void collector_priv::clang_source_file(const clang_source_file_t &f) {
     auto intervl = interval_of_source_range(entire_f_src_rng);
 
     src_rng_to_vert_map.add(make_pair(intervl, entire_f_v_container));
+  } else {
+    if (is_sys) {
+      //
+      // since we have a FileID, we can look up to see where this was included.
+      //
+      std::string &toplvl_syst_src_path =
+          depctx.toplvl_syst_src_f_paths.at(index_of_source_file((*it).second));
+
+      fs::path the_path = path_of_clang_source_file(top_level_system_header(f));
+
+      if (!the_path.empty()) {
+        if (debugMode &&
+            !toplvl_syst_src_path.empty() &&
+            the_path.string() != toplvl_syst_src_path) {
+          llvm::errs()
+              << "warning: conflicting toplvl_syst_src_paths: \""
+              << toplvl_syst_src_path
+              << "\", \""
+              << the_path.string()
+              << "\"\n";
+        }
+
+        toplvl_syst_src_path = the_path.string();
+      }
+    }
+  }
+}
+
+void collector_priv::clang_source_file(clang::FileEntryRef FER) {
+  const auto FEUID = clang_fs_unique_id(FER.getUniqueID());
+
+  auto it = src_f_map.find(FEUID);
+  if (it == src_f_map.end()) {
+    bool is_sys(clang_is_system_source_file(FER));
+
+    vector<string> &src_f_paths =
+        is_sys ? depctx.syst_src_f_paths
+               : depctx.user_src_f_paths;
+
+    source_file_t _f =
+        is_sys ? syst_index_of_index(src_f_paths.size())
+               :                     src_f_paths.size();
+
+    src_f_paths.push_back(path_of_clang_source_file(FER).string());
+
+    if (is_sys)
+      depctx.toplvl_syst_src_f_paths.push_back(""); /* to be filled in later */
+
+    src_f_map.insert({FEUID, _f});
+#if 0
+    cl_src_f_map.insert({_f, FEUID});
+#endif
+
+    auto &f_src_rng_vert_map =
+        is_sys ? f_sys_src_rng_vert_map
+               : f_usr_src_rng_vert_map;
+    f_src_rng_vert_map.emplace_back(new source_ranges_to_vertex_map_t);
+
+    // create a vertex which denotes the entire file
+    source_range_t entire_f_src_rng = {_f, location_entire_file_beg,
+                                       location_entire_file_end};
+    depends_vertex_set_t entire_f_v_container;
+    depends_vertex_t entire_f_v = boost::add_vertex(this->res);
+    res[entire_f_v] = entire_f_src_rng;
+    entire_f_v_container.insert(entire_f_v);
+
+    source_ranges_to_vertex_map_t &src_rng_to_vert_map =
+        source_range_vertex_map_of_source_file(entire_f_src_rng.f);
+
+    auto intervl = interval_of_source_range(entire_f_src_rng);
+
+    src_rng_to_vert_map.add(make_pair(intervl, entire_f_v_container));
   }
 }
 
 source_file_t collector_priv::map_clang_source_file(const clang_source_file_t &f) {
   clang_source_file(f);
-  auto it = src_f_map.find(f);
+  auto it = src_f_map.find(clang_fs_unique_id(FileEntryForFID(f).getUniqueID()));
+  assert(it != src_f_map.end());
   return (*it).second;
 }
 
-clang_source_file_t collector_priv::map_source_file(const source_file_t &f) {
-  auto it = cl_src_f_map.find(f);
+source_file_t collector_priv::map_clang_source_file(clang::FileEntryRef FER) {
+  clang_source_file(FER);
+  auto it = src_f_map.find(clang_fs_unique_id(FER.getUniqueID()));
+  assert(it != src_f_map.end());
   return (*it).second;
 }
 
@@ -193,10 +289,17 @@ collector_priv::map_clang_source_range(const clang_source_range_t &clrng) {
   return {map_clang_source_file(clrng.f), clrng.beg, clrng.end};
 }
 
+#if 0
+clang_source_file_t collector_priv::map_source_file(const source_file_t &f) {
+  auto it = cl_src_f_map.find(f);
+  return (*it).second;
+}
+
 clang_source_range_t
 collector_priv::map_source_range(const source_range_t &srcrng) {
   return {map_source_file(srcrng.f), srcrng.beg, srcrng.end};
 }
+#endif
 
 source_ranges_to_vertex_map_t &
 collector_priv::source_range_vertex_map_of_source_file(const source_file_t &f) {
@@ -525,9 +628,27 @@ void collector_priv::code(clang_source_range_t cl_src_range) {
 static unordered_map<source_file_t, set<clang_full_source_location_t>> ifdefs;
 
 void collector_priv::inclusion(const clang_full_source_location_t &include,
-                               const clang_source_file_t &included) {
-  source_file_t include_f = map_clang_source_file(include.f);
-  source_file_t included_f = map_clang_source_file(included);
+                               clang::FileEntryRef included) {
+  this->inclusions.emplace_back(
+      full_source_location_t(map_clang_source_file(include.f), include.pos),
+      map_clang_source_file(included));
+}
+
+void collector_priv::process_inclusions(void) {
+
+  for (auto &inclusion : inclusions) {
+  source_file_t include_f = inclusion.first.f;
+  source_file_t included_f = inclusion.second;
+
+  struct {
+    source_location_t pos;
+  } include = {inclusion.first.beg};
+
+  if (debugMode)
+    llvm::errs() << llvm::formatv("#include of \"{0}\" from {1}:{2}\n",
+                 path_of_source_file(included_f),
+                 path_of_source_file(include_f),
+                 include.pos);
 
   source_ranges_to_vertex_map_t &src_rng_to_vert_map =
       source_range_vertex_map_of_source_file(include_f);
@@ -544,13 +665,8 @@ void collector_priv::inclusion(const clang_full_source_location_t &include,
     auto entire_v = *(*entire_it).second.begin();
     res[entire_v].includes.emplace(include.pos, included_f);
 
-    return;
+    continue;
   }
-
-  if (debugMode)
-    llvm::errs() << llvm::formatv("#include of \"{0}\" in code {1}\n",
-                 path_of_source_file(included_f),
-                 path_of_source_file(include_f));
 
   assert((*preexist_it).second.size() == 1);
   assert(include.pos >= (*preexist_it).first.lower());
@@ -605,6 +721,7 @@ void collector_priv::inclusion(const clang_full_source_location_t &include,
     depends_vertex_t def_vert = *vert_container.begin();
 
     boost::add_edge(preexist_v, def_vert, res);
+  }
   }
 }
 
@@ -779,8 +896,12 @@ void collector::code(const clang_source_range_t &cl_src_range) {
 }
 
 void collector::inclusion(const clang_full_source_location_t &include,
-                          const clang_source_file_t &included) {
+                          clang::FileEntryRef included) {
   priv->inclusion(include, included);
+}
+
+void collector::process_inclusions(void) {
+  priv->process_inclusions();
 }
 
 void collector::global_code(const clang_source_range_t &cl_src_range,

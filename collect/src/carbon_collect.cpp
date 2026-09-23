@@ -37,6 +37,8 @@ using unordered_map = boost::unordered::unordered_flat_map<Params...>;
 
 namespace carbon {
 
+extern SourceManager *gl_SM;
+
 static const bool debugMode = false;
 
 static collector c;
@@ -47,22 +49,17 @@ static fs::path root_bin_dir;
 // will expand macros before the parser will notify of the AST's therein
 static list<pair<clang_source_range_t, clang_source_range_t>> if_def_uses;
 
-// we keep a list of macro uses to apply at the close since the preprocessor
-// will expand macros before the parser will notify of the AST's therein
-static list<pair<clang_full_source_location_t, const FileEntry *>> inclusions;
-
 //
 // stores most-recent #define for a given macro
 //
 static unordered_map<string, clang_source_range_t> _macro_defs;
 static unordered_map<string, SourceRange> macro_defs;
 
-static clang_source_file_t clang_source_file(FileID);
 template <bool SingleChar = false>
 static clang_source_range_t clang_source_range(const SourceRange &);
 static clang_full_source_location_t
 clang_full_source_location(const SourceLocation &);
-static SourceManager *gl_SM;
+static clang::CompilerInstance *gl_CI;
 
 static bool isSourceRangeSensible(const SourceRange& SR) {
   assert(gl_SM);
@@ -267,47 +264,56 @@ public:
                           StringRef FileName,
                           bool IsAngled,
                           CharSourceRange FilenameRange,
-                          OptionalFileEntryRef IncludedFileRef,
+                          OptionalFileEntryRef MaybeIncludedFileRef,
                           StringRef SearchPath,
                           StringRef RelativePath,
                           const Module *Imported,
                           bool ModuleImported,
                           SrcMgr::CharacteristicKind FileType) override {
-    if (!IncludedFileRef ||
+    if (!MaybeIncludedFileRef ||
         !IncludeTok.is(tok::identifier) ||
-        IncludeTok.getIdentifierInfo()->getPPKeywordID() != tok::pp_include)
+        IncludeTok.getIdentifierInfo()->getPPKeywordID() != tok::pp_include ||
+        isInBuiltin(HashLoc))
       return;
 
+    FileEntryRef IncludedFER = *MaybeIncludedFileRef;
+    const FileEntry &IncludedFE = IncludedFER.getFileEntry();
+
+    StringRef IncludedPath = IncludedFE.tryGetRealPathName();
+
+    if (IncludedPath.empty()) {
+      // wtf?
+      if (debugMode)
+        llvm::errs() << "wtf " << __PRETTY_FUNCTION__ << '\n';
+      return;
+    }
+
     if (debugMode) {
-      StringRef IncludedPath = IncludedFileRef->getFileEntry().tryGetRealPathName();
-      if (IncludedPath.empty())
-        IncludedPath = FileName;
 
-      llvm::errs() << "InclusionDirective: \"" << IncludedPath << "\" (";
+      llvm::errs() << "InclusionDirective <\"" << IncludedPath << "\"> (\"";
 
-      FileID FID = SM.getDecomposedExpansionLoc(HashLoc).first;
+      FileID HashFID = SM.getDecomposedExpansionLoc(HashLoc).first;
       bool isSys;
 
       {
         bool Invalid = false;
-        const SrcMgr::SLocEntry &SEntry = SM.getSLocEntry(FID, &Invalid);
+        const SrcMgr::SLocEntry &SEntry = SM.getSLocEntry(HashFID, &Invalid);
         isSys = !Invalid && SEntry.isFile() &&
                 SrcMgr::isSystem(SEntry.getFile().getFileCharacteristic());
       }
 
-      const FileEntry *FE = SM.getFileEntryForID(FID);
-      if (FE) {
+      const FileEntry *HashFE = SM.getFileEntryForID(HashFID);
+      if (HashFE) {
         if (isSys)
-          llvm::errs() << FE->tryGetRealPathName();
+          llvm::errs() << HashFE->tryGetRealPathName();
         else
-          llvm::errs() << fs::relative(FE->tryGetRealPathName().str(), root_src_dir).string();
+          llvm::errs() << fs::relative(HashFE->tryGetRealPathName().str(), root_src_dir).string();
 
-        llvm::errs() << ")\n";
+        llvm::errs() << "\")\n";
       }
     }
 
-    inclusions.emplace_back(clang_full_source_location(HashLoc),
-                            &IncludedFileRef->getFileEntry());
+    c.inclusion(clang_full_source_location(HashLoc), IncludedFER);
   }
 
   //
@@ -674,22 +680,7 @@ public:
     //
     // handle inclusions at the end
     //
-    for (const auto &pair : inclusions) {
-      try {
-        clang_source_file_t included = SM.translateFile(pair.second);
-        if (included.isInvalid()) {
-          if (debugMode) {
-            llvm::errs() << "failed to process inclusion\n";
-          }
-          continue;
-        }
-
-        c.inclusion(pair.first, included);
-      } catch (const failed_to_get_path_exception &) {
-        if (debugMode)
-          llvm::errs() << "failed to get path to source file\n";
-      }
-    }
+    c.process_inclusions();
 
     block_signals([&] { c.write_carbon_output(); });
   }
@@ -702,6 +693,7 @@ public:
   unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                             llvm::StringRef file) override {
     // XXX
+    gl_CI = &CI;
     gl_SM = &CI.getSourceManager();
 
 #if 0
@@ -927,12 +919,16 @@ clang_source_range_t clang_source_range(const SourceRange &SR) {
   return {FID, beg, end};
 }
 
-clang_source_file_t clang_source_file(FileID fid) {
-  return fid;
-}
-
 size_t hash_of_clang_source_file(const clang_source_file_t &f) {
   return f.getHashValue();
+}
+
+fs::path path_of_clang_source_file(clang::FileEntryRef FER) {
+  StringRef SR = FER.getFileEntry().tryGetRealPathName();
+  assert(!SR.empty());
+
+  fs::path p(SR.str());
+  return fs::canonical(p);
 }
 
 fs::path path_of_clang_source_file(const clang_source_file_t &f) {
@@ -954,6 +950,21 @@ bool clang_is_system_source_file(const clang_source_file_t &f) {
   const SrcMgr::SLocEntry &SEntry = SM.getSLocEntry(f, &Invalid);
   return !Invalid && SEntry.isFile() &&
          SrcMgr::isSystem(SEntry.getFile().getFileCharacteristic());
+}
+
+bool clang_is_system_source_file(clang::FileEntryRef FER) {
+  CompilerInstance &CI = *gl_CI;
+
+  clang::Preprocessor &PP = CI.getPreprocessor();
+
+  SrcMgr::CharacteristicKind kind =
+      PP.getHeaderSearchInfo().getFileDirFlavor(FER);
+
+  return SrcMgr::isSystem(kind);
+}
+
+FSUniqueID clang_fs_unique_id(const llvm::sys::fs::UniqueID &UID) {
+  return FSUniqueID(UID.getDevice(), UID.getFile());
 }
 
 unsigned
@@ -1052,7 +1063,7 @@ clang_source_file_t top_level_system_header(const clang_source_file_t &f) {
                << path_of_clang_source_file(clang_source_file(incFid)).string()
                << "  $$$\n";
 #endif
-  return top_level_system_header(clang_source_file(incFid));
+  return top_level_system_header(incFid);
 }
 
 #if 0

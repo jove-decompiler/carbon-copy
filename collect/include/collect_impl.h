@@ -1,4 +1,8 @@
 #pragma once
+#include "fsuid.h"
+
+#include <string>
+
 #include <boost/container/scoped_allocator.hpp>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/interprocess/containers/set.hpp>
@@ -12,7 +16,6 @@
 #include <boost/interprocess/sync/scoped_lock.hpp>
 #include <boost/interprocess/sync/sharable_lock.hpp>
 #include <boost/unordered/concurrent_node_map.hpp>
-#include <string>
 
 namespace carbon {
 
@@ -59,6 +62,11 @@ struct source_range_t {
 struct full_source_location_t {
   source_file_t f;
   source_location_t beg;
+
+#if 0
+  full_source_location_t(source_file_t f, source_location_t beg)
+      : f(f), beg(beg) {}
+#endif
 
   bool operator<(const full_source_location_t &sl) const {
     return f < sl.f || beg < sl.beg;
