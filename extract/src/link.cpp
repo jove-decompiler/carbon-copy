@@ -406,22 +406,22 @@ void resolve_references(
       continue;
 
     // get global definition vertex
-    auto def_sr = (*def_it).second;
-    auto &def_sr_map = is_system_source_file(def_sr.f)
-                           ? syst_sl_vert_map[index_of_source_file(def_sr.f)]
-                           : user_sl_vert_map[index_of_source_file(def_sr.f)];
-    auto def_vert_it = def_sr_map.find(def_sr.beg);
+    auto def_sl = (*def_it).second;
+    auto &def_sr_map = is_system_source_file(def_sl.f)
+                           ? syst_sl_vert_map[index_of_source_file(def_sl.f)]
+                           : user_sl_vert_map[index_of_source_file(def_sl.f)];
+    auto def_vert_it = def_sr_map.find(def_sl.pos);
     if (def_vert_it == def_sr_map.end()) {
       cerr << "warning (bug): global definition not found in source ranges map "
               "for given declaration" << endl;
       cerr << "symbol: " << (*def_it).first << endl;
-      cerr << "offset: " << def_sr.beg << endl;
+      cerr << "offset: " << def_sl.pos << endl;
       cerr << "file: "
-           << (is_system_source_file(def_sr.f)
+           << (is_system_source_file(def_sl.f)
                    ? out[boost::graph_bundle]
-                         .syst_src_f_paths[index_of_source_file(def_sr.f)]
+                         .syst_src_f_paths[index_of_source_file(def_sl.f)]
                    : out[boost::graph_bundle]
-                         .user_src_f_paths[index_of_source_file(def_sr.f)])
+                         .user_src_f_paths[index_of_source_file(def_sl.f)])
            << endl;
       continue;
     }
@@ -433,13 +433,13 @@ void resolve_references(
     out[dummy_vert].end = location_dummy_end;
 
     // for every declaration vertex, add an edge from it to the dummy vertex
-    for (auto &dcl_sr : entry.second) {
+    for (auto &dcl_sl : entry.second) {
       auto &dcl_sr_map =
-          (is_system_source_file(dcl_sr.f)
-               ? syst_sl_vert_map[index_of_source_file(dcl_sr.f)]
-               : user_sl_vert_map[static_cast<unsigned>(dcl_sr.f)]);
+          (is_system_source_file(dcl_sl.f)
+               ? syst_sl_vert_map[index_of_source_file(dcl_sl.f)]
+               : user_sl_vert_map[static_cast<unsigned>(dcl_sl.f)]);
 
-      auto dcl_vert_it = dcl_sr_map.find(dcl_sr.beg);
+      auto dcl_vert_it = dcl_sr_map.find(dcl_sl.pos);
       if (dcl_vert_it == dcl_sr_map.end()) {
         cerr << "warning (bug): global declaration not found in source ranges "
                 "map"

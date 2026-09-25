@@ -38,6 +38,7 @@ using unordered_map = boost::unordered::unordered_flat_map<Params...>;
 namespace carbon {
 
 extern SourceManager *gl_SM;
+extern Preprocessor *gl_PP;
 
 static const bool debugMode = false;
 
@@ -45,15 +46,9 @@ static collector c;
 static fs::path root_src_dir;
 static fs::path root_bin_dir;
 
-// we keep a list of macro uses to apply at the close since the preprocessor
-// will expand macros before the parser will notify of the AST's therein
-static list<pair<clang_source_range_t, clang_source_range_t>> if_def_uses;
-
 //
 // stores most-recent #define for a given macro
 //
-static unordered_map<string, clang_source_range_t> _macro_defs;
-static unordered_map<string, SourceRange> macro_defs;
 
 template <bool SingleChar = false>
 static clang_source_range_t clang_source_range(const SourceRange &);
@@ -75,14 +70,21 @@ static bool isSourceRangeSensible(const SourceRange& SR) {
 static llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
                                      const clang_source_file_t &f);
 #endif
-static llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
-                                     const clang_source_range_t &cl_src_rng);
+static llvm::raw_ostream &operator<<(llvm::raw_ostream &,
+                                     const clang_full_source_location_t &);
+static llvm::raw_ostream &operator<<(llvm::raw_ostream &,
+                                     const clang_source_range_t &);
 
 static bool is_counterpart(const clang_source_range_t &cl_src_rng,
                            const clang_source_range_t &other_cl_src_rng);
 
 static clang_source_range_t
 normalize_source_range(const clang_source_range_t &);
+
+static unsigned
+get_backwards_offset_to_new_line(const clang_full_source_location_t &);
+static unsigned
+get_forwards_offset_to_new_line(const clang_full_source_location_t &);
 
 static void needsDecl(const clang_source_range_t &user, const Decl *D);
 static void needsType(const clang_source_range_t& user_src_rng, const Type* T);
@@ -197,19 +199,23 @@ public:
 static const char *FileChangeReasonStrings[] = {
     "EnterFile", "ExitFile", "SystemHeaderPragma", "RenameFile"};
 
-#if 0
 static const char *CharacteristicKindStrings[] = {
     "C_User", "C_System", "C_ExternCSystem", "C_User_ModuleMap",
     "C_System_ModuleMap"};
-#endif
 
 class CarbonCollectPP : public PPCallbacks {
   CompilerInstance &CI;
   SourceManager &SM;
-  unordered_set<string> macrosSeen;
+  Preprocessor &PP;
+
+  unordered_map<string, std::pair<SourceRange, clang_source_range_t>> defs;
 
 public:
-  CarbonCollectPP(CompilerInstance &CI) : CI(CI), SM(CI.getSourceManager()) {}
+  CarbonCollectPP(CompilerInstance &CI)
+      : CI(CI), SM(CI.getSourceManager()), PP(CI.getPreprocessor()) {
+    gl_PP = &PP;
+    gl_SM = &SM;
+  }
 
   // \brief Return true if \c Loc is a location in a built-in macro.
   bool isInBuiltin(SourceLocation Loc) {
@@ -220,7 +226,6 @@ public:
   void FileChanged(SourceLocation Loc, FileChangeReason Reason,
                    SrcMgr::CharacteristicKind FileType,
                    FileID PrevFID) override {
-
     if (debugMode) {
       FileID FID = SM.getDecomposedExpansionLoc(Loc).first;
       bool isSys;
@@ -243,19 +248,38 @@ public:
       }
     }
 
-#if 0
     if (debugMode) {
       const FileEntry *PrevFE = SM.getFileEntryForID(PrevFID);
+      assert(PrevFE);
 
       llvm::errs() << "FileChanged:\n"
                    << "  Loc : " << Loc.printToString(SM) << '\n'
                    << "  Reason : " << FileChangeReasonStrings[Reason] << '\n'
                    << "  FileType : " << CharacteristicKindStrings[FileType] << '\n'
                    << "  PrevFID : "
-                   << ((PrevFE && PrevFE->isValid()) ?
-                       PrevFE->tryGetRealPathName() :
-                       "<invalid>") << '\n';
+                   << ((!PrevFID.isInvalid() && PrevFE) ? PrevFE->tryGetRealPathName() : "<invalid>")
+                   << '\n';
     }
+
+#if 0
+    if (Reason != ExitFile)
+      return;
+
+    auto PrevFER = SM.getFileEntryRefForID(PrevFID);
+    if (!PrevFER)
+      return;
+
+    HeaderFileInfo &HFI = PP.getHeaderSearchInfo().getFileInfo(*PrevFER);
+
+    const IdentifierInfo *Guard =
+        HFI.getControllingMacro(PP.getExternalSource());
+
+    if (!Guard)
+      return;
+
+    llvm::errs() << "HEADER GUARD: "
+                 << Guard->getName()
+                 << '\n';
 #endif
   }
 
@@ -334,9 +358,10 @@ public:
     if (!isSourceRangeSensible(SR))
       return;
 
-    StringRef Nm = II->getName();
+    const std::string Nm = II->getName().str();
 
-    bool redefined = macro_defs.find(Nm.str()) != macro_defs.end();
+    auto it_def = this->defs.find(Nm);
+    const bool redefined = it_def != this->defs.end();
 
     if (debugMode) {
       if (redefined)
@@ -350,17 +375,20 @@ public:
     // heavy-weight machinery is required to acquire the source range for a
     // macro definition
     //
-    clang_source_range_t src_rng(clang_source_range(SR));
-    src_rng.end = src_rng.beg +
-                  static_cast<clang_source_location_t>(
-                      Lexer::getSourceText(CharSourceRange::getTokenRange(SR),
-                                           SM, CI.getLangOpts(), nullptr)
-                          .size());
-    src_rng.beg -= get_backwards_offset_to_new_line(src_rng);
-    c.code(src_rng);
+    clang_source_range_t sr_def(clang_source_range(SR));
+    sr_def.end = sr_def.beg +
+                 static_cast<clang_source_location_t>(
+                     Lexer::getSourceText(CharSourceRange::getTokenRange(SR),
+                                          SM, CI.getLangOpts(), nullptr)
+                         .size());
+    sr_def.beg -= get_backwards_offset_to_new_line(sr_def.getBegin());
+    c.code(sr_def);
 
     if (debugMode)
-      llvm::errs() << ' ' << src_rng << '\n';
+      llvm::errs() << ' ' << sr_def << '\n';
+
+    if (!redefined)
+      return;
 
     //
     // if the macro here is being redefined, we need to make sure that all code
@@ -368,35 +396,39 @@ public:
     // redefinition to preserve the textual ordering when we perform a
     // topological sort of the dependency graph
     //
-    if (redefined && !is_counterpart(src_rng, _macro_defs[Nm.str()])) {
-      auto it = macro_defs.find(Nm.str());
-      auto _it = _macro_defs.find(Nm.str());
+    auto &active_def = (*it_def).second;
 
-      if (debugMode)
-        llvm::errs() << "  PrevDefLoc: "
-                     << (*it).second.getBegin().printToString(SM) << '\n'
-                     << "  PrevDefEndLoc: "
-                     << (*it).second.getEnd().printToString(SM) << '\n';
+    const bool same = is_counterpart(sr_def, active_def.second);
+    if (same)
+      return;
 
-      c.follow_users_of((*_it).second, src_rng);
-    }
+    if (debugMode)
+      llvm::errs() << "  PrevDefLoc: "
+                   << active_def.first.getBegin().printToString(SM) << '\n'
+                   << "  PrevDefEndLoc: "
+                   << active_def.first.getEnd().printToString(SM) << '\n';
 
-    macro_defs[Nm.str()] = SR;
-    _macro_defs[Nm.str()] = src_rng;
+    c.follow_users_of(active_def.second, sr_def);
+
+    active_def = std::make_pair(SR, sr_def);
   }
 
   //
   // Hook called whenever a macro invocation is found.
   //
-  void MacroExpands(const Token &MacroNameTok, const MacroDefinition &MD,
-                    SourceRange userSR, const MacroArgs *Args) override {
+  void MacroExpands(const Token &MacroNameTok,
+                    const MacroDefinition &MD,
+                    SourceRange userSR,
+                    const MacroArgs *Args) override {
     const MacroInfo *MI = MD.getMacroInfo();
-    if (!MI)
-      return;
-
     IdentifierInfo *II = MacroNameTok.getIdentifierInfo();
     if (!II)
       return;
+
+    if (!MI) {
+      llvm::errs() << llvm::formatv("MacroExpands: wtf? ({0})\"", II->getName());
+      return;
+    }
 
     if (!isSourceRangeSensible(userSR))
       return;
@@ -428,7 +460,8 @@ public:
   //
   // Hook called whenever the 'defined' operator is seen.
   //
-  void Defined(const Token &MacroNameTok, const MacroDefinition &MD,
+  void Defined(const Token &MacroNameTok,
+               const MacroDefinition &MD,
                SourceRange Range) override {
     const MacroInfo *MI = MD.getMacroInfo();
 
@@ -440,34 +473,36 @@ public:
     SourceRange useeSR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
 
     clang_source_range_t user(clang_source_range(userSR));
-    user.beg -= get_backwards_offset_to_new_line(user);
+    user.beg -= get_backwards_offset_to_new_line(user.getBegin());
 
     clang_source_range_t usee(clang_source_range(useeSR));
 
-    if_def_uses.push_back(make_pair(user, normalize_source_range(usee)));
+    c.defined(user.getBegin(), normalize_source_range(usee));
   }
 
   //
   // Hook called whenever an #ifdef is seen.
   //
-  void Ifdef(SourceLocation Loc, const Token &MacroNameTok,
+  void Ifdef(SourceLocation Loc,
+             const Token &MacroNameTok,
              const MacroDefinition &MD) override {
     const MacroInfo *MI = MD.getMacroInfo();
     if (!MI || MI->isBuiltinMacro() || isInBuiltin(MI->getDefinitionLoc()) ||
         isInBuiltin(Loc))
       return;
 
-    SourceRange userSR(Loc, Loc);
     SourceRange useeSR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
 
-    clang_source_range_t user(clang_source_range(userSR));
-    user.beg -= get_backwards_offset_to_new_line(user);
+    auto user = clang_full_source_location(Loc);
+    user.pos -= get_backwards_offset_to_new_line(user);
 
     clang_source_range_t usee(clang_source_range(useeSR));
 
-    if_def_uses.emplace_back(user, normalize_source_range(usee));
-
+#if 1
+    c.ifdef(user, normalize_source_range(usee));
+#else
     c.ifdef(user, clang_full_source_location(MI->getDefinitionLoc()));
+#endif
 
     if (debugMode)
       llvm::errs() << "Ifdef " << user << " ---> " << usee << '\n';
@@ -476,22 +511,38 @@ public:
   //
   // Hook called whenever an #ifndef is seen.
   //
-  void Ifndef(SourceLocation Loc, const Token &MacroNameTok,
+  void Ifndef(SourceLocation Loc,
+              const Token &MacroNameTok,
               const MacroDefinition &MD) override {
     const MacroInfo *MI = MD.getMacroInfo();
     if (!MI || MI->isBuiltinMacro() || isInBuiltin(MI->getDefinitionLoc()) ||
         isInBuiltin(Loc))
       return;
 
-    SourceRange userSR(Loc, Loc);
     SourceRange useeSR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
 
-    clang_source_range_t user(clang_source_range(userSR));
-    user.beg -= get_backwards_offset_to_new_line(user);
+    auto user = clang_full_source_location(Loc);
+    user.pos -= get_backwards_offset_to_new_line(user);
 
     clang_source_range_t usee(clang_source_range(useeSR));
 
-    if_def_uses.push_back(make_pair(user, normalize_source_range(usee)));
+    c.ifndef(user, normalize_source_range(usee));
+
+    if (debugMode)
+      llvm::errs() << "Ifndef " << user << " ---> " << usee << '\n';
+  }
+
+  /// Hook called whenever an \#endif is seen.
+  /// \param Loc the source location of the directive.
+  /// \param IfLoc the source location of the \#if/\#ifdef/\#ifndef directive.
+  void Endif(SourceLocation Loc, SourceLocation IfLoc) override {
+#if 0
+    SourceRange SR(IfLoc, Loc);
+    clang_source_range_t src_rng(clang_source_range(SR));
+    src_rng.beg -= get_backwards_offset_to_new_line(src_rng.getBegin());
+    src_rng.end += get_forwards_offset_to_new_line(src_rng.getEnd());
+    c.code(src_rng);
+#endif
   }
 };
 
@@ -662,25 +713,7 @@ public:
   }
 
   void HandleTranslationUnit(ASTContext &Context) override {
-    //
-    // handle preprocessor ifdef, ifndef, if defined at the end, because we only
-    // want to consider those uses which fall within top-level declarations and
-    // we'll only be able to know that at the end
-    //
-    for (auto &user_usee_pair : if_def_uses) {
-      clang_source_range_t &user = user_usee_pair.first;
-      clang_source_range_t &usee = user_usee_pair.second;
-
-      if (debugMode)
-        llvm::errs() << "MacroIfDef " << user << ' ' << usee << '\n';
-
-      c.use_if_user_exists(user, usee);
-    }
-
-    //
-    // handle inclusions at the end
-    //
-    c.process_inclusions();
+    c.finalize();
 
     block_signals([&] { c.write_carbon_output(); });
   }
@@ -857,8 +890,29 @@ normalize_source_range(const clang_source_range_t &cl_src_rng) {
 
 clang_full_source_location_t clang_full_source_location(const SourceLocation &Loc) {
   assert(gl_SM);
+  SourceManager &SM = *gl_SM;
+
   pair<FileID, unsigned> info = gl_SM->getDecomposedExpansionLoc(Loc);
-  return {info.first, static_cast<clang_source_location_t>(info.second)};
+
+  unsigned pos = info.second;
+  ////////////////////////////////////////////////////////////////// FIXME (dup)
+  FileID FID = info.first;
+  assert(!FID.isInvalid());
+  assert(SM.getFileEntryForID(FID));
+
+  MultipliersForFileIDs &Mults =
+      FileMultMap[SM.getFileEntryForID(FID)->getUniqueID()];
+
+  if (Mults.FIDMap.find(FID) == Mults.FIDMap.end())
+    Mults.FIDMap[FID] = Mults.Curr++;
+
+  unsigned M = Mults.FIDMap[FID];
+  unsigned N = static_cast<int>(SM.getBufferData(FID).size());
+
+  pos += M * N;
+  ////////////////////////////////////////////////////////////////// FIXME (dup)
+
+  return {info.first, static_cast<clang_source_location_t>(pos)};
 }
 
 static void dumpLoc(SourceManager &SM,
@@ -1096,43 +1150,43 @@ FSUniqueID clang_fs_unique_id(const llvm::sys::fs::UniqueID &UID) {
 }
 
 unsigned
-get_backwards_offset_to_new_line(const clang_source_range_t &cl_src_rng) {
+get_backwards_offset_to_new_line(const clang_full_source_location_t &cl_full_src_loc) {
   SourceManager &SM = *gl_SM;
 
-  int beg =
-      cl_src_rng.beg % static_cast<int>(SM.getBufferData(cl_src_rng.f).size());
+  const unsigned len = SM.getBufferData(cl_full_src_loc.f).size();
 
-  char ch;
-  int pos = beg;
+  const unsigned beg = cl_full_src_loc.pos % len;
+  unsigned pos = beg;
 
   while (pos > 0 &&
-         character_at_clang_file_offset(cl_src_rng.f, static_cast<clang_source_location_t>(pos - 1)) != '\r' &&
-         character_at_clang_file_offset(cl_src_rng.f, static_cast<clang_source_location_t>(pos - 1)) != '\n') {
+         character_at_clang_file_offset(cl_full_src_loc.f, static_cast<clang_source_location_t>(pos - 1)) != '\r' &&
+         character_at_clang_file_offset(cl_full_src_loc.f, static_cast<clang_source_location_t>(pos - 1)) != '\n') {
     --pos;
   }
 
-  assert(beg >= pos);
+  assert(pos <= beg);
 
   return static_cast<unsigned>(beg - pos);
 }
 
 unsigned
-get_forwards_offset_to_new_line(const clang_source_range_t &cl_src_rng) {
+get_forwards_offset_to_new_line(const clang_full_source_location_t &cl_full_src_loc) {
   SourceManager &SM = *gl_SM;
 
-  int len = cl_src_rng.end - cl_src_rng.beg;
-  int beg =
-      cl_src_rng.beg % static_cast<int>(SM.getBufferData(cl_src_rng.f).size());
-  int end = beg + len;
+  const unsigned len = SM.getBufferData(cl_full_src_loc.f).size();
 
-  char ch;
-  int pos = end;
-  do {
-    ch = character_at_clang_file_offset(
-        cl_src_rng.f, static_cast<clang_source_location_t>(pos++));
-  } while (ch != '\r' && ch != '\n' && ch != '\0');
+  const unsigned beg = cl_full_src_loc.pos % len;
+  int pos = beg;
 
-  return static_cast<unsigned>(pos - end - 1);
+  while (pos < len &&
+         character_at_clang_file_offset(cl_full_src_loc.f, static_cast<clang_source_location_t>(pos)) != '\r' &&
+         character_at_clang_file_offset(cl_full_src_loc.f, static_cast<clang_source_location_t>(pos)) != '\n') {
+    ++pos;
+  }
+
+  assert(pos >= beg);
+
+  return static_cast<unsigned>(pos - beg);
 }
 
 unsigned char_count_until_semicolon(const clang_source_range_t &cl_src_rng) {
@@ -1165,6 +1219,13 @@ char character_at_clang_file_offset(const clang_source_file_t &f,
   SourceManager &SM = *gl_SM;
 
   return SM.getBufferData(f)[static_cast<unsigned>(off)];
+}
+
+unsigned char_count(const clang_source_file_t &f) {
+  assert(gl_SM);
+  SourceManager &SM = *gl_SM;
+
+  return SM.getBufferData(f).size();
 }
 
 clang_source_file_t top_level_system_header(const clang_source_file_t &f) {
@@ -1205,6 +1266,46 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
     return os << fs::relative(srcfp, root_src_dir).string();
 }
 #endif
+
+llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                              const clang_full_source_location_t &cl_src_loc) {
+  SourceManager &SM = *gl_SM;
+
+  unsigned pos = cl_src_loc.pos;
+
+  const unsigned pos_ = pos;
+
+  const unsigned N = SM.getBufferData(cl_src_loc.f).size();
+
+  bool normalized = false;
+  if (pos > N) {
+    normalized = true;
+
+    pos = pos % N;
+  }
+
+  const FileEntry *FE = SM.getFileEntryForID(cl_src_loc.f);
+
+//os << '[';
+
+  if (clang_is_system_source_file(cl_src_loc.f)) {
+    os << FE->tryGetRealPathName();
+  } else {
+    os << fs::relative(FE->tryGetRealPathName().str(), root_src_dir).string();
+  }
+
+  os << ' ';
+
+  os << pos_;
+
+  if (normalized) {
+    os << ' ' << pos;
+  }
+
+//os << ']';
+
+  return os;
+}
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
                               const clang_source_range_t &cl_src_rng) {
@@ -1248,19 +1349,6 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
   os << ']';
 
   return os;
-}
-
-clang_source_range_t &clang_source_range_t::operator--(void) {
-  assert(gl_SM);
-  SourceManager &SM = *gl_SM;
-
-  int diff = this->end - this->beg;
-  assert(diff > 0);
-
-  this->beg -= SM.getBufferData(this->f).size();
-  this->end = this->beg + diff;
-
-  return *this;
 }
 
 static bool _isSourceRangeSensible(const SourceRange &SR) {

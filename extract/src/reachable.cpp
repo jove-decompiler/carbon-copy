@@ -139,7 +139,7 @@ set<code_t> reachable_code(unordered_set<code_t> &out,
           is_system_source_file(sl.f)
               ? syst_src_rng_vert_map[index_of_source_file(sl.f)]
               : user_src_rng_vert_map[index_of_source_file(sl.f)];
-      auto def_vert_it = def_sr_map.find(sl.beg);
+      auto def_vert_it = def_sr_map.find(sl.pos);
       if (def_vert_it == def_sr_map.end()) {
         cerr << "source range for symbol " << gs << " not found (skipping) "
              << endl;
@@ -162,7 +162,7 @@ set<code_t> reachable_code(unordered_set<code_t> &out,
           is_system_source_file(sl.f)
               ? syst_src_rng_vert_map[index_of_source_file(sl.f)]
               : user_src_rng_vert_map[index_of_source_file(sl.f)];
-      auto def_vert_it = def_sr_map.find(sl.beg);
+      auto def_vert_it = def_sr_map.find(sl.pos);
       if (def_vert_it == def_sr_map.end()) {
         cerr << "source range for symbol " << gs << " not found (skipping) "
              << endl;

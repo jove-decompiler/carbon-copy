@@ -1,5 +1,6 @@
 #include "collect.h"
 #include "collect_impl.h"
+#include "utilities_clang.h"
 
 #include <iostream>
 #include <fstream>
@@ -26,11 +27,15 @@
 using namespace std;
 namespace fs = boost::filesystem;
 
+using std::list;
+using std::pair;
+
 namespace carbon {
 
 static const bool debugMode = false;
 
-clang::SourceManager *gl_SM;
+clang::SourceManager *gl_SM = nullptr;
+clang::Preprocessor *gl_PP = nullptr;
 
 static llvm::raw_ostream &
 operator<<(llvm::raw_ostream &os,
@@ -62,7 +67,6 @@ typedef boost::icl::interval_map<source_location_t, depends_vertex_set_t>
     source_ranges_to_vertex_map_t;
 
 typedef std::pair<uint64_t, uint64_t> FSUniqueID;
-
 FSUniqueID FSUniqueIDOf(void);
 
 struct collector_priv {
@@ -89,9 +93,19 @@ struct collector_priv {
   vector<unique_ptr<source_ranges_to_vertex_map_t>> f_usr_src_rng_vert_map;
   vector<unique_ptr<source_ranges_to_vertex_map_t>> f_sys_src_rng_vert_map;
 
-  // we keep a list of macro uses to apply at the close since the preprocessor
-  // will expand macros before the parser will notify of the AST's therein
   list<pair<full_source_location_t, source_file_t>> inclusions;
+
+  //
+  // NOT to be serialized
+  //
+  struct extra_uses_t {
+    //
+    // preprocessor
+    //
+    list<pair<full_source_location_t, source_range_t>> defined;
+    list<pair<full_source_location_t, source_range_t>> ifndef;
+    list<pair<full_source_location_t, source_range_t>> ifdef;
+  } extra_uses;
 
   collector_priv() : depctx(res[boost::graph_bundle]) {}
 
@@ -102,8 +116,13 @@ struct collector_priv {
   source_file_t map_clang_source_file(const clang_source_file_t &);
   source_file_t map_clang_source_file(clang::FileEntryRef);
 
+  full_source_location_t
+  full_source_location(const clang_full_source_location_t &);
+
   // map clang source ranges to our own source ranges
   source_range_t map_clang_source_range(const clang_source_range_t &);
+
+  unsigned char_count(clang::FileEntryRef);
 
 #if 0
   // map our own source ranges to clang source ranges
@@ -117,13 +136,14 @@ struct collector_priv {
 
   string path_of_source_file(const source_file_t &);
 
-  void code(clang_source_range_t);
+  void code(const clang_source_range_t &);
+  void code(source_range_t &); /* only used by priv */
 
   void use(const clang_source_range_t &user_cl_src_rng,
            const clang_source_range_t &usee_cl_src_rng);
 
-  void use_if_user_exists(const clang_source_range_t &user,
-                          const clang_source_range_t &usee);
+  bool use_if_user_exists(const full_source_location_t &user,
+                          const source_range_t &usee);
 
   void follow_users_of(const clang_source_range_t &,
                        const clang_source_range_t &);
@@ -131,10 +151,21 @@ struct collector_priv {
   void inclusion(const clang_full_source_location_t &include,
                  clang::FileEntryRef included);
 
-  void ifdef(const clang_source_range_t &user,
-             const clang_full_source_location_t &usee);
+  void ifdef(const clang_full_source_location_t &user,
+             const clang_source_range_t &usee);
+
+  void ifndef(const clang_full_source_location_t &user,
+              const clang_source_range_t &usee);
+
+  void defined(const clang_full_source_location_t &user,
+               const clang_source_range_t &usee);
 
   void fixup_static_functions();
+
+  void finalize(void);
+  void process_extra_uses(
+      const char *desc,
+      const list<pair<full_source_location_t, source_range_t>> &);
   void process_inclusions(void);
 };
 
@@ -161,11 +192,16 @@ void collector_priv::clang_source_file(const clang_source_file_t &f) {
         is_sys ? depctx.syst_src_f_paths
                : depctx.user_src_f_paths;
 
+    std::vector<unsigned> &src_f_sizes =
+        is_sys ? depctx.syst_src_f_sizes
+               : depctx.user_src_f_sizes;
+
     source_file_t _f =
         is_sys ? syst_index_of_index(src_f_paths.size())
                :                     src_f_paths.size();
 
     src_f_paths.push_back(path_of_clang_source_file(f).string());
+    src_f_sizes.push_back(carbon::char_count(f));
 
     if (is_sys)
       depctx.toplvl_syst_src_f_paths.push_back(
@@ -234,11 +270,16 @@ void collector_priv::clang_source_file(clang::FileEntryRef FER) {
         is_sys ? depctx.syst_src_f_paths
                : depctx.user_src_f_paths;
 
+    std::vector<unsigned> &src_f_sizes =
+        is_sys ? depctx.syst_src_f_sizes
+               : depctx.user_src_f_sizes;
+
     source_file_t _f =
         is_sys ? syst_index_of_index(src_f_paths.size())
                :                     src_f_paths.size();
 
     src_f_paths.push_back(path_of_clang_source_file(FER).string());
+    src_f_sizes.push_back(this->char_count(FER));
 
     if (is_sys)
       depctx.toplvl_syst_src_f_paths.push_back(""); /* to be filled in later */
@@ -284,9 +325,18 @@ source_file_t collector_priv::map_clang_source_file(clang::FileEntryRef FER) {
   return (*it).second;
 }
 
+full_source_location_t collector_priv::full_source_location(
+    const clang_full_source_location_t &cl_src_loc) {
+  return {map_clang_source_file(cl_src_loc.f), cl_src_loc.pos};
+}
+
 source_range_t
 collector_priv::map_clang_source_range(const clang_source_range_t &clrng) {
   return {map_clang_source_file(clrng.f), clrng.beg, clrng.end};
+}
+
+unsigned collector_priv::char_count(clang::FileEntryRef FER) {
+  return FER.getFileEntry().getSize();
 }
 
 #if 0
@@ -361,13 +411,18 @@ void collector_priv::use(const clang_source_range_t &user_cl_src_rng,
   boost::add_edge(user_vert, usee_vert, res);
 }
 
-void collector_priv::use_if_user_exists(
-    const clang_source_range_t &user_cl_src_rng,
-    const clang_source_range_t &usee_cl_src_rng) {
-  code(usee_cl_src_rng);
+bool collector_priv::use_if_user_exists(
+    const full_source_location_t &user,
+    const source_range_t &usee_src_rng) {
+  {
+    source_range_t usee_src_rng_ = usee_src_rng;
+    this->code(usee_src_rng_);
+  }
 
-  source_range_t user_src_rng(map_clang_source_range(user_cl_src_rng));
-  source_range_t usee_src_rng(map_clang_source_range(usee_cl_src_rng));
+  source_range_t user_src_rng;
+  user_src_rng.f   = user.f;
+  user_src_rng.beg = user.pos;
+  user_src_rng.end = user_src_rng.beg + 1;
 
   source_ranges_to_vertex_map_t &user_src_rng_to_vert_map =
       source_range_vertex_map_of_source_file(user_src_rng.f);
@@ -378,7 +433,7 @@ void collector_priv::use_if_user_exists(
   auto usee_vert_it = usee_src_rng_to_vert_map.find(usee_src_rng.beg);
 
   if (user_vert_it == user_src_rng_to_vert_map.end())
-    return;
+    return false;
 
   assert(usee_vert_it != usee_src_rng_to_vert_map.end());
 
@@ -395,15 +450,16 @@ void collector_priv::use_if_user_exists(
   // check for user using itself. when this occurs, do nothing.
   //
   if (user_vert == usee_vert)
-    return;
+    return false;
 
   //
   // check for inverse edge already existing
   //
   if (boost::edge(usee_vert, user_vert, res).second)
-    return;
+    return false;
 
   boost::add_edge(user_vert, usee_vert, res);
+  return true;
 }
 
 void collector_priv::follow_users_of(
@@ -456,12 +512,16 @@ void collector_priv::follow_users_of(
   }
 }
 
-void collector_priv::code(clang_source_range_t cl_src_range) {
-  if (!cl_src_range)
+void collector_priv::code(const clang_source_range_t &cl_src_range) {
+  source_range_t src_rng(map_clang_source_range(cl_src_range));
+  this->code(src_rng);
+}
+
+void collector_priv::code(source_range_t &src_rng) {
+  if (!src_rng)
     return;
 
   auto do_code = [&](void) -> void {
-  source_range_t src_rng(map_clang_source_range(cl_src_range));
   auto intervl = interval_of_source_range(src_rng);
 
   source_ranges_to_vertex_map_t &src_rng_to_vert_map =
@@ -622,27 +682,73 @@ void collector_priv::code(clang_source_range_t cl_src_range) {
 
   do_code();
 
-  __attribute__((musttail)) return this->code(--cl_src_range);
+  source_file_t f = src_rng.f;
+  unsigned idx = index_of_source_file(f);
+  unsigned N = is_system_source_file(f) ? this->depctx.syst_src_f_sizes.at(idx)
+                                        : this->depctx.user_src_f_sizes.at(idx);
+  dec_source_range(src_rng, N);
+  __attribute__((musttail)) return this->code(src_rng);
 }
 
 static unordered_map<source_file_t, set<clang_full_source_location_t>> ifdefs;
+static unordered_map<source_file_t, set<clang_full_source_location_t>> ifndefs;
 
 void collector_priv::inclusion(const clang_full_source_location_t &include,
                                clang::FileEntryRef included) {
-  this->inclusions.emplace_back(
-      full_source_location_t(map_clang_source_file(include.f), include.pos),
-      map_clang_source_file(included));
+  this->inclusions.emplace_back(full_source_location(include),
+                                map_clang_source_file(included));
+}
+
+#if 0
+void collector_priv::process_preprocessor(void) {
+  for (const clang_full_source_location_t &def : this->ifdefs[included_f]) {
+    source_file_t def_f = map_clang_source_file(def.f);
+
+    source_ranges_to_vertex_map_t &src_rng_to_vert_map =
+        source_range_vertex_map_of_source_file(def_f);
+
+    auto defv_it = src_rng_to_vert_map.find(def.pos);
+    if (defv_it == src_rng_to_vert_map.end())
+      continue;
+
+    const depends_vertex_set_t &vert_container = (*defv_it).second;
+    assert(vert_container.size() == 1);
+
+    depends_vertex_t def_vert = *vert_container.begin();
+
+    boost::add_edge(preexist_v, def_vert, res);
+  }
+}
+#endif
+
+void collector_priv::process_extra_uses(
+    const char *desc,
+    const list<pair<full_source_location_t, source_range_t>> &l) {
+  //
+  // handle preprocessor ifdef, ifndef, if defined at the end, because we only
+  // want to consider those uses which fall within top-level declarations and
+  // we'll only be able to know that at the end
+  //
+  for (const auto &use : l) {
+    const auto &user = use.first;
+    const auto &usee = use.second;
+
+    if (!this->use_if_user_exists(user, usee))
+      continue;
+
+    if (debugMode)
+      llvm::errs() << desc << " \"" << "\" ---> \"" << "\"\n";
+  }
 }
 
 void collector_priv::process_inclusions(void) {
-
   for (auto &inclusion : inclusions) {
   source_file_t include_f = inclusion.first.f;
   source_file_t included_f = inclusion.second;
 
   struct {
     source_location_t pos;
-  } include = {inclusion.first.beg};
+  } include = {inclusion.first.pos};
 
   if (debugMode)
     llvm::errs() << llvm::formatv("#include of \"{0}\" from {1}:{2}\n",
@@ -704,32 +810,33 @@ void collector_priv::process_inclusions(void) {
       }
     }
   }
-
-  for (const clang_full_source_location_t &def : ifdefs[included_f]) {
-    source_file_t def_f = map_clang_source_file(def.f);
-
-    source_ranges_to_vertex_map_t &src_rng_to_vert_map =
-        source_range_vertex_map_of_source_file(def_f);
-
-    auto defv_it = src_rng_to_vert_map.find(def.pos);
-    if (defv_it == src_rng_to_vert_map.end())
-      continue;
-
-    const depends_vertex_set_t &vert_container = (*defv_it).second;
-    assert(vert_container.size() == 1);
-
-    depends_vertex_t def_vert = *vert_container.begin();
-
-    boost::add_edge(preexist_v, def_vert, res);
-  }
   }
 }
 
-void collector_priv::ifdef(const clang_source_range_t &user,
-                           const clang_full_source_location_t &usee) {
-  source_file_t include_f = map_clang_source_file(user.f);
+void collector_priv::ifdef(const clang_full_source_location_t &user,
+                           const clang_source_range_t &usee) {
+  extra_uses.ifdef.emplace_back(full_source_location(user),
+                                map_clang_source_range(usee));
+}
 
-  ifdefs[include_f].insert(usee);
+void collector_priv::ifndef(const clang_full_source_location_t &user,
+                            const clang_source_range_t &usee) {
+  extra_uses.ifndef.emplace_back(full_source_location(user),
+                                 map_clang_source_range(usee));
+}
+
+void collector_priv::defined(const clang_full_source_location_t &user,
+                             const clang_source_range_t &usee) {
+  extra_uses.defined.emplace_back(full_source_location(user),
+                                  map_clang_source_range(usee));
+}
+
+void collector_priv::finalize(void) {
+  process_extra_uses("Defined",     extra_uses.defined);
+  process_extra_uses("MacroIfnDef", extra_uses.ifndef);
+  process_extra_uses("MacroIfDef",  extra_uses.ifdef);
+
+  process_inclusions(); /* do this at the very end! */
 }
 
 static void vertex_interval_maps_of_graph(
@@ -788,7 +895,7 @@ void collector_priv::fixup_static_functions() {
   // corresponding definition and add a forward declaration edge to it.
   //
   for (auto &entry : res[boost::graph_bundle].static_decls) {
-    full_source_location_t def_sr;
+    full_source_location_t def_sl;
 
     // does a corresponding definition exist?
     auto sdefs_it = res[boost::graph_bundle].static_defs.find(entry.first);
@@ -802,12 +909,12 @@ void collector_priv::fixup_static_functions() {
 	continue;
       }
 
-      def_sr = (*gdefs_it).second;
+      def_sl = (*gdefs_it).second;
     } else {
       auto def_it = (*sdefs_it).second.begin();
       assert(def_it != (*sdefs_it).second.end());
 
-      def_sr = *def_it++;
+      def_sl = *def_it++;
 
       if (def_it != (*sdefs_it).second.end())
 	llvm::errs() << "warning: multiple definitions found for static function "
@@ -815,41 +922,41 @@ void collector_priv::fixup_static_functions() {
     }
 
     // get definition vertex
-    auto &def_sr_map = is_system_source_file(def_sr.f)
-                           ? syst_sl_vert_map[index_of_source_file(def_sr.f)]
-                           : user_sl_vert_map[index_of_source_file(def_sr.f)];
-    auto def_vert_it = def_sr_map.find(def_sr.beg);
+    auto &def_sr_map = is_system_source_file(def_sl.f)
+                           ? syst_sl_vert_map[index_of_source_file(def_sl.f)]
+                           : user_sl_vert_map[index_of_source_file(def_sl.f)];
+    auto def_vert_it = def_sr_map.find(def_sl.pos);
     if (def_vert_it == def_sr_map.end()) {
       llvm::errs()
           << "warning (bug): static function definition not found in source "
              "ranges map [symbol: "
-          << entry.first << " offset: " << def_sr.beg << " file: "
-          << (is_system_source_file(def_sr.f)
+          << entry.first << " offset: " << def_sl.pos << " file: "
+          << (is_system_source_file(def_sl.f)
                   ? res[boost::graph_bundle]
-                        .syst_src_f_paths[index_of_source_file(def_sr.f)]
+                        .syst_src_f_paths[index_of_source_file(def_sl.f)]
                   : res[boost::graph_bundle]
-                        .user_src_f_paths[index_of_source_file(def_sr.f)])
+                        .user_src_f_paths[index_of_source_file(def_sl.f)])
           << '\n';
       continue;
     }
     auto def_vert = *(*def_vert_it).second.begin();
 
-    for (auto &dcl_sr : entry.second) {
+    for (auto &dcl_sl : entry.second) {
       // get declaration vertex
-      auto &dcl_sr_map = is_system_source_file(dcl_sr.f)
-                             ? syst_sl_vert_map[index_of_source_file(dcl_sr.f)]
-                             : user_sl_vert_map[index_of_source_file(dcl_sr.f)];
-      auto dcl_vert_it = dcl_sr_map.find(dcl_sr.beg);
+      auto &dcl_sr_map = is_system_source_file(dcl_sl.f)
+                             ? syst_sl_vert_map[index_of_source_file(dcl_sl.f)]
+                             : user_sl_vert_map[index_of_source_file(dcl_sl.f)];
+      auto dcl_vert_it = dcl_sr_map.find(dcl_sl.pos);
       if (dcl_vert_it == dcl_sr_map.end()) {
         llvm::errs()
             << "warning (bug): static function declaration not found in source "
                "ranges map [symbol: "
-            << entry.first << " offset: " << dcl_sr.beg << " file: "
-            << (is_system_source_file(dcl_sr.f)
+            << entry.first << " offset: " << dcl_sl.pos << " file: "
+            << (is_system_source_file(dcl_sl.f)
                     ? res[boost::graph_bundle]
-                          .syst_src_f_paths[index_of_source_file(dcl_sr.f)]
+                          .syst_src_f_paths[index_of_source_file(dcl_sl.f)]
                     : res[boost::graph_bundle]
-                          .user_src_f_paths[index_of_source_file(dcl_sr.f)])
+                          .user_src_f_paths[index_of_source_file(dcl_sl.f)])
             << '\n';
         continue;
       }
@@ -898,10 +1005,6 @@ void collector::code(const clang_source_range_t &cl_src_range) {
 void collector::inclusion(const clang_full_source_location_t &include,
                           clang::FileEntryRef included) {
   priv->inclusion(include, included);
-}
-
-void collector::process_inclusions(void) {
-  priv->process_inclusions();
 }
 
 void collector::global_code(const clang_source_range_t &cl_src_range,
@@ -984,20 +1087,28 @@ void collector::use(const clang_source_range_t &user_cl_src_rng,
   priv->use(user_cl_src_rng, usee_cl_src_rng);
 }
 
-void collector::use_if_user_exists(
-    const clang_source_range_t &user_cl_src_rng,
-    const clang_source_range_t &usee_cl_src_rng) {
-  priv->use_if_user_exists(user_cl_src_rng, usee_cl_src_rng);
-}
-
 void collector::follow_users_of(const clang_source_range_t &prior,
                                 const clang_source_range_t &following) {
   priv->follow_users_of(prior, following);
 }
 
-void collector::ifdef(const clang_source_range_t &user,
-                      const clang_full_source_location_t &usee) {
+void collector::ifdef(const clang_full_source_location_t &user,
+                      const clang_source_range_t &usee) {
   priv->ifdef(user, usee);
+}
+
+void collector::ifndef(const clang_full_source_location_t &user,
+                       const clang_source_range_t &usee) {
+  priv->ifndef(user, usee);
+}
+
+void collector::defined(const clang_full_source_location_t &user,
+                        const clang_source_range_t &usee) {
+  priv->defined(user, usee);
+}
+
+void collector::finalize(void) {
+  priv->finalize();
 }
 
 void collector::write_carbon_output() {

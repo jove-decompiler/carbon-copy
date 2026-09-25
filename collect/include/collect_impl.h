@@ -44,14 +44,14 @@ static const source_location_t location_dummy_end = INT32_MIN + 1;
 static const source_location_t location_entire_file_beg = INT32_MAX - 1;
 static const source_location_t location_entire_file_end = INT32_MAX;
 
-// pair of source locations, and which file they reside in
-// since source ranges never overlap source_range_uid_t can uniquely identify
 struct source_range_t {
   source_file_t f;
   source_location_t beg;
   source_location_t end;
 
   std::set<std::pair<unsigned, source_file_t>> includes;
+
+  explicit operator bool(void) const { return end > beg && beg >= 0; }
 
   template <class Archive>
   void serialize(Archive &ar, const unsigned int) {
@@ -61,7 +61,7 @@ struct source_range_t {
 
 struct full_source_location_t {
   source_file_t f;
-  source_location_t beg;
+  source_location_t pos;
 
 #if 0
   full_source_location_t(source_file_t f, source_location_t beg)
@@ -69,12 +69,12 @@ struct full_source_location_t {
 #endif
 
   bool operator<(const full_source_location_t &sl) const {
-    return f < sl.f || beg < sl.beg;
+    return f < sl.f || pos < sl.pos;
   }
 
   template <class Archive>
   void serialize(Archive &ar, const unsigned int) {
-    ar &f &beg;
+    ar &f &pos;
   }
 };
 
@@ -106,10 +106,14 @@ struct depends_context_t {
   std::vector<std::string> user_src_f_paths;
   std::vector<std::string> syst_src_f_paths;
 
+  std::vector<unsigned> user_src_f_sizes;
+  std::vector<unsigned> syst_src_f_sizes;
+
   /* parallel to syst_src_f_paths, this contains the "top-level" headers
    * which user code referenced which eventually included the corresponding
    * headers */
   std::vector<std::string> toplvl_syst_src_f_paths;
+
 
   struct {
     std::set<std::string> def, und;
@@ -121,9 +125,18 @@ struct depends_context_t {
 
   template <class Archive>
   void serialize(Archive &ar, const unsigned int) {
-    ar &glbl_defs &glbl_decls &static_defs &static_decls &user_src_f_paths
-        &syst_src_f_paths &toplvl_syst_src_f_paths &macros.def &macros
-            .und &include.dirs;
+    ar &glbl_defs
+       &glbl_decls
+       &static_defs
+       &static_decls
+       &user_src_f_paths
+       &syst_src_f_paths
+       &user_src_f_sizes
+       &syst_src_f_sizes
+       &toplvl_syst_src_f_paths
+       &macros.def
+       &macros.und
+       &include.dirs;
   }
 };
 

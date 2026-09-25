@@ -27,22 +27,22 @@ void build_static_function_definitions_map(
   for (auto &entry : g[boost::graph_bundle].static_defs) {
     bool *b = new bool(false);
 
-    for (auto &def_sr : entry.second) {
+    for (auto &def_sl : entry.second) {
       // get definition vertex
       auto &def_sr_map =
-          is_system_source_file(def_sr.f)
-              ? syst_src_rng_vert_map[index_of_source_file(def_sr.f)]
-              : user_src_rng_vert_map[index_of_source_file(def_sr.f)];
-      auto def_vert_it = def_sr_map.find(def_sr.beg);
+          is_system_source_file(def_sl.f)
+              ? syst_src_rng_vert_map[index_of_source_file(def_sl.f)]
+              : user_src_rng_vert_map[index_of_source_file(def_sl.f)];
+      auto def_vert_it = def_sr_map.find(def_sl.pos);
       if (def_vert_it == def_sr_map.end()) {
         cerr << "warning (bug): static function definition not found in source "
                 "ranges map [symbol: "
-             << entry.first << " offset: " << def_sr.beg << " file: "
-             << (is_system_source_file(def_sr.f)
+             << entry.first << " offset: " << def_sl.pos << " file: "
+             << (is_system_source_file(def_sl.f)
                      ? g[boost::graph_bundle]
-                           .syst_src_f_paths[index_of_source_file(def_sr.f)]
+                           .syst_src_f_paths[index_of_source_file(def_sl.f)]
                      : g[boost::graph_bundle]
-                           .user_src_f_paths[index_of_source_file(def_sr.f)])
+                           .user_src_f_paths[index_of_source_file(def_sl.f)])
              << endl;
         continue;
       }
@@ -50,12 +50,12 @@ void build_static_function_definitions_map(
       out[*(*def_vert_it).second.begin()] = b;
 
 #if 0
-      cerr << "  [offset: " << def_sr.beg << " file: "
-           << (is_system_source_file(def_sr.f)
+      cerr << "  [offset: " << def_sl.pos << " file: "
+           << (is_system_source_file(def_sl.f)
                    ? g[boost::graph_bundle]
-                         .syst_src_f_paths[index_of_source_file(def_sr.f)]
+                         .syst_src_f_paths[index_of_source_file(def_sl.f)]
                    : g[boost::graph_bundle]
-                         .user_src_f_paths[index_of_source_file(def_sr.f)])
+                         .user_src_f_paths[index_of_source_file(def_sl.f)])
            << ']' << endl;
 #endif
     }
