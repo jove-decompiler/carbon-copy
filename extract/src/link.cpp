@@ -1,3 +1,6 @@
+//
+// Making use of multiple translation-units (experimental).
+//
 #include "link.h"
 #include "read_collection.h"
 #include <boost/icl/interval_map.hpp>
