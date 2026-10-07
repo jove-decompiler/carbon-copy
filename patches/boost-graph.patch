@@ -1,0 +1,84 @@
+--- boost-src/libs/graph/include/boost/graph/adj_list_serialize.hpp	2026-10-06 02:04:15.367016088 -0700
++++ boost-src/libs/graph/include/boost/graph/adj_list_serialize.hpp	2026-08-12 04:38:08.000000000 -0700
+@@ -40,31 +40,29 @@
+ 
+     template < class Archive, class OEL, class VL, class D, class VP, class EP,
+         class GP, class EL >
+     inline void save(Archive& ar,
+         const boost::adjacency_list< OEL, VL, D, VP, EP, GP, EL >& graph,
+         const unsigned int /* file_version */
+     )
+     {
+         using Graph = adjacency_list< OEL, VL, D, VP, EP, GP, EL >;
+         using Vertex = typename graph_traits< Graph >::vertex_descriptor;
+-        using VertexSizeType = typename graph_traits< Graph >::vertices_size_type;
+-        using EdgeSizeType = typename graph_traits< Graph >::edges_size_type;
+ 
+-        const VertexSizeType V = num_vertices(graph);
+-        const EdgeSizeType E = num_edges(graph);
++        const auto V = num_vertices(graph);
++        const auto E = num_edges(graph);
+         ar << BOOST_SERIALIZATION_NVP(V);
+         ar << BOOST_SERIALIZATION_NVP(E);
+ 
+         // assign indices to vertices
+-        std::unordered_map< Vertex, VertexSizeType > indices(V);
+-        VertexSizeType num = 0;
++        std::unordered_map< Vertex, Vertex > indices(V);
++        Vertex num = 0;
+         BGL_FORALL_VERTICES_T(v, graph, Graph)
+         {
+             indices[v] = num++;
+             ar << serialization::make_nvp(
+                 "vertex_property", get(vertex_all_t(), graph, v));
+         }
+ 
+         // write edges
+         BGL_FORALL_EDGES_T(e, graph, Graph)
+         {
+@@ -82,42 +80,41 @@
+         class GP, class EL >
+     inline void load(
+         Archive& ar, boost::adjacency_list< OEL, VL, D, VP, EP, GP, EL >& graph,
+         const unsigned int /* file_version */
+     )
+     {
+         using Graph = adjacency_list< OEL, VL, D, VP, EP, GP, EL >;
+         using Vertex = typename graph_traits< Graph >::vertex_descriptor;
+         using Edge = typename graph_traits< Graph >::edge_descriptor;
+         using VertexSizeType = typename graph_traits< Graph >::vertices_size_type;
+-        using EdgeSizeType = typename graph_traits< Graph >::edges_size_type;
+ 
+         VertexSizeType V;
+         ar >> BOOST_SERIALIZATION_NVP(V);
+         
+-        EdgeSizeType E;
++        VertexSizeType E;
+         ar >> BOOST_SERIALIZATION_NVP(E);
+ 
+         std::vector< Vertex > verts(V);
+         size_t i = 0;
+         while (V-- > 0)
+         {
+             const auto v = add_vertex(graph);
+             verts[i++] = v;
+             ar >> serialization::make_nvp(
+                 "vertex_property", get(vertex_all_t(), graph, v));
+         }
+         
+         while (E-- > 0)
+         {
+-            VertexSizeType u;
+-            VertexSizeType v;
++            Vertex u;
++            Vertex v;
+             ar >> BOOST_SERIALIZATION_NVP(u);
+             ar >> BOOST_SERIALIZATION_NVP(v);
+ 
+             Edge e;
+             bool inserted;
+             boost::tie(e, inserted) = add_edge(verts[u], verts[v], graph);
+             ar >> serialization::make_nvp(
+                 "edge_property", get(edge_all_t(), graph, e));
+         }
+         ar >> serialization::make_nvp(

@@ -40,9 +40,12 @@ else()
 
   FetchContent_Declare(
     Boost
-    URL https://github.com/boostorg/boost/releases/download/boost-1.89.0/boost-1.89.0-cmake.tar.gz
-    URL_MD5 aaeeb6cfb86e85ce28c8f2f1fc104d75
+    URL https://github.com/boostorg/boost/releases/download/boost-1.92.0/boost-1.92.0-cmake.tar.gz
+    URL_HASH SHA256=f51707c27359a0df0cac1beada86de31bb5eed5e8285592dadec384df99c2984
+    USES_TERMINAL_DOWNLOAD TRUE
     DOWNLOAD_EXTRACT_TIMESTAMP ON
+
+    PATCH_COMMAND patch -p1 -R -i "${CMAKE_SOURCE_DIR}/patches/boost-graph.patch"
   )
 
   set(BOOST_INCLUDE_LIBRARIES system filesystem serialization graph interprocess icl program_options format)
