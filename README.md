@@ -15,7 +15,7 @@ After compiling, the build directory should contain a directory named `.carbon`.
 # extract the top-level element at line number 123 (could be a function, or struct, or typedef, etc.)
 carbon-extract relative/path/to/source/file.c:123l
 ```
-Note that the resulting view of the codebase is specific to the build (chosen configuration, the host machine's architecture, etc), as it occurs during compilation (after the preprocessing step, although the output is *not* preprocessed). Having this "dynamic" view of the codebase is what makes the extraction step rather straightforward (and most importantly, correct).
+Note that the resulting view of the codebase is specific to the build (chosen configuration, the host machine's architecture, etc), as it occurs during compilation (after the preprocessing step, although the output is *not* preprocessed). Having this "dynamic" view of the codebase is what makes the extraction step rather straightforward (and most importantly, correct [^1]).
 ## Building
 Install recent (>=11) clang. If your distro has a package for it, it is recommended to use that.
 ```bash
@@ -24,3 +24,5 @@ mkdir build && cd build/
 cmake -G Ninja -D CMAKE_BUILD_TYPE=RelWithDebInfo ..
 ninja
 ```
+
+[^1]: For a single translation-unit. See `extract --link`.
