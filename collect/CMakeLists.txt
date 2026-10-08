@@ -8,6 +8,9 @@ add_library(carbon-collect SHARED
   src/utilities_clang.cpp
 )
 
+target_compile_options(carbon-collect PRIVATE
+  $<$<AND:$<CONFIG:RelWithDebInfo>,$<COMPILE_LANGUAGE:CXX>>:-UNDEBUG>)
+
 target_include_directories(carbon-collect PRIVATE
   include
 )
