@@ -15,7 +15,7 @@ struct boost_filesystem_path_hasher_t {
 };
 
 typedef std::pair<
-    boost::filesystem::path,
+    boost::filesystem::path, /* .carbon directory */
     std::unordered_set<boost::filesystem::path, boost_filesystem_path_hasher_t>>
     collection_sources_t;
 

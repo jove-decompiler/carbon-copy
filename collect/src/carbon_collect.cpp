@@ -40,7 +40,7 @@ namespace carbon {
 extern SourceManager *gl_SM;
 extern Preprocessor *gl_PP;
 
-static const bool debugMode = false;
+static const bool debugMode = false; // FIXME environment variable?
 
 static collector c;
 static fs::path root_src_dir;
@@ -208,9 +208,19 @@ class CarbonCollectPP : public PPCallbacks {
   SourceManager &SM;
   Preprocessor &PP;
 
-  unordered_map<string, std::pair<SourceRange, clang_source_range_t>> defs;
+  unordered_map<std::string_view, std::pair<SourceRange, clang_source_range_t>> defs;
 
 public:
+  struct {
+    unordered_set<std::string_view> HeaderGuardNames;
+
+    list<std::pair<const MacroInfo *, std::string_view>> definitions;
+
+    list<std::tuple<const MacroInfo *, clang_full_source_location_t, clang_source_range_t, llvm::StringRef>> ifndef;
+    list<std::tuple<const MacroInfo *, clang_full_source_location_t, clang_source_range_t, llvm::StringRef>> ifdef;
+    list<clang_source_range_t> endif;
+  } at_end;
+
   CarbonCollectPP(CompilerInstance &CI)
       : CI(CI), SM(CI.getSourceManager()), PP(CI.getPreprocessor()) {
     gl_PP = &PP;
@@ -250,18 +260,19 @@ public:
 
     if (debugMode) {
       const FileEntry *PrevFE = SM.getFileEntryForID(PrevFID);
-      assert(PrevFE);
 
       llvm::errs() << "FileChanged:\n"
                    << "  Loc : " << Loc.printToString(SM) << '\n'
                    << "  Reason : " << FileChangeReasonStrings[Reason] << '\n'
                    << "  FileType : " << CharacteristicKindStrings[FileType] << '\n'
                    << "  PrevFID : "
-                   << ((!PrevFID.isInvalid() && PrevFE) ? PrevFE->tryGetRealPathName() : "<invalid>")
+                   << (PrevFE && (!PrevFID.isInvalid()) ? PrevFE->tryGetRealPathName() : "<invalid>")
                    << '\n';
     }
 
-#if 0
+    //
+    // header guards.
+    //
     if (Reason != ExitFile)
       return;
 
@@ -277,10 +288,11 @@ public:
     if (!Guard)
       return;
 
-    llvm::errs() << "HEADER GUARD: "
-                 << Guard->getName()
-                 << '\n';
-#endif
+//  c.hdrguard(Guard->getName());
+    at_end.HeaderGuardNames.emplace(Guard->getName());
+
+    if (debugMode)
+      llvm::errs() << "HEADER GUARD: " << Guard->getName() << '\n';
   }
 
   void InclusionDirective(SourceLocation HashLoc,
@@ -355,10 +367,17 @@ public:
 
     SourceRange SR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
 
+#if 0
+    if (!SourceLocation::isPairOfFileLocations(SR.getBegin(), SR.getEnd()))
+      return;
+#endif
+
     if (!isSourceRangeSensible(SR))
       return;
 
-    const std::string Nm = II->getName().str();
+    const auto Nm = II->getName();
+
+//  c.defined_macro_name(Nm);
 
     auto it_def = this->defs.find(Nm);
     const bool redefined = it_def != this->defs.end();
@@ -371,10 +390,6 @@ public:
       llvm::errs() << '\"' << Nm << '\"';
     }
 
-    //
-    // heavy-weight machinery is required to acquire the source range for a
-    // macro definition
-    //
     clang_source_range_t sr_def(clang_source_range(SR));
     sr_def.end = sr_def.beg +
                  static_cast<clang_source_location_t>(
@@ -382,13 +397,17 @@ public:
                                           SM, CI.getLangOpts(), nullptr)
                          .size());
     sr_def.beg -= get_backwards_offset_to_new_line(sr_def.getBegin());
+
+    at_end.definitions.emplace_back(MI, Nm);
     c.code(sr_def);
 
     if (debugMode)
       llvm::errs() << ' ' << sr_def << '\n';
 
-    if (!redefined)
+    if (!redefined) {
+      this->defs.emplace(Nm, std::make_pair(SR, sr_def));
       return;
+    }
 
     //
     // if the macro here is being redefined, we need to make sure that all code
@@ -430,6 +449,11 @@ public:
       return;
     }
 
+#if 0
+    if (!SourceLocation::isPairOfFileLocations(userSR.getBegin(), userSR.getEnd()))
+      return;
+#endif
+
     if (!isSourceRangeSensible(userSR))
       return;
 
@@ -462,22 +486,34 @@ public:
   //
   void Defined(const Token &MacroNameTok,
                const MacroDefinition &MD,
-               SourceRange Range) override {
+               SourceRange userSR) override {
     const MacroInfo *MI = MD.getMacroInfo();
 
     if (!MI || MI->isBuiltinMacro() || isInBuiltin(MI->getDefinitionLoc()) ||
-        isInBuiltin(Range.getBegin()))
+        isInBuiltin(userSR.getBegin()))
       return;
 
-    SourceRange userSR(Range);
+#if 0
+    if (!SourceLocation::isPairOfFileLocations(userSR.getBegin(), userSR.getEnd()))
+      return;
+#endif
+
+    clang_full_source_location_t user = clang_full_source_location(userSR.getBegin());
+//  user.beg -= get_backwards_offset_to_new_line(user.getBegin());
+
     SourceRange useeSR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
-
-    clang_source_range_t user(clang_source_range(userSR));
-    user.beg -= get_backwards_offset_to_new_line(user.getBegin());
-
     clang_source_range_t usee(clang_source_range(useeSR));
 
-    c.defined(user.getBegin(), normalize_source_range(usee));
+    {
+      clang_source_range_t user_src_rng;
+      user_src_rng.f = user.f;
+      user_src_rng.beg = user.pos;
+      user_src_rng.end = user.pos+1;
+
+      c.use(user_src_rng, usee);
+    }
+
+    c.defined(user, normalize_source_range(usee));
   }
 
   //
@@ -486,26 +522,53 @@ public:
   void Ifdef(SourceLocation Loc,
              const Token &MacroNameTok,
              const MacroDefinition &MD) override {
-    const MacroInfo *MI = MD.getMacroInfo();
-    if (!MI || MI->isBuiltinMacro() || isInBuiltin(MI->getDefinitionLoc()) ||
-        isInBuiltin(Loc))
+    if (isInBuiltin(Loc))
       return;
 
-    SourceRange useeSR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
-
-    auto user = clang_full_source_location(Loc);
+    clang_full_source_location_t user = clang_full_source_location(Loc);
     user.pos -= get_backwards_offset_to_new_line(user);
 
-    clang_source_range_t usee(clang_source_range(useeSR));
+    const MacroInfo *MI = MD.getMacroInfo();
+    auto *const II = MacroNameTok.getIdentifierInfo();
+    llvm::StringRef Name = II ? II->getName() : "";
+    if (MI) {
+      if (MI->isBuiltinMacro() ||
+          isInBuiltin(MI->getDefinitionLoc()))
+        return;
+      SourceRange useeSR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
 
-#if 1
-    c.ifdef(user, normalize_source_range(usee));
-#else
-    c.ifdef(user, clang_full_source_location(MI->getDefinitionLoc()));
+#if 0
+      if (!SourceLocation::isPairOfFileLocations(useeSR.getBegin(), useeSR.getEnd()))
+        return;
 #endif
 
-    if (debugMode)
-      llvm::errs() << "Ifdef " << user << " ---> " << usee << '\n';
+      clang_source_range_t usee(clang_source_range(useeSR));
+      usee.beg -= get_backwards_offset_to_new_line(usee.getBegin());
+
+
+      {
+        clang_source_range_t user_src_rng;
+        user_src_rng.f = user.f;
+        user_src_rng.beg = user.pos;
+        user_src_rng.end = user.pos+1;
+
+        c.use(user_src_rng, usee);
+      }
+
+//    c.ifdef(user, normalize_source_range(usee));
+      at_end.ifdef.emplace_back(MI, user, usee, Name);
+
+      if (debugMode)
+        llvm::errs() << "Ifdef " << user << " ---> " << usee << " (\"" << Name << "\")\n";
+    } else {
+#if 0
+      c.ifdef(user, clang_full_source_location(MI->getDefinitionLoc()));
+#endif
+      at_end.ifdef.emplace_back(MI, user, clang_source_range(SourceRange(Loc, Loc)), Name);
+
+      if (debugMode)
+        llvm::errs() << "Ifdef " << user << " (\"" << Name << "\")\n";
+    }
   }
 
   //
@@ -514,35 +577,63 @@ public:
   void Ifndef(SourceLocation Loc,
               const Token &MacroNameTok,
               const MacroDefinition &MD) override {
-    const MacroInfo *MI = MD.getMacroInfo();
-    if (!MI || MI->isBuiltinMacro() || isInBuiltin(MI->getDefinitionLoc()) ||
-        isInBuiltin(Loc))
+    if (isInBuiltin(Loc))
       return;
 
-    SourceRange useeSR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
-
-    auto user = clang_full_source_location(Loc);
+    clang_full_source_location_t user = clang_full_source_location(Loc);
     user.pos -= get_backwards_offset_to_new_line(user);
 
-    clang_source_range_t usee(clang_source_range(useeSR));
+    const MacroInfo *MI = MD.getMacroInfo();
+    auto *const II = MacroNameTok.getIdentifierInfo();
+    llvm::StringRef Name = II ? II->getName() : "";
+    if (MI) {
+      if (MI->isBuiltinMacro() ||
+          isInBuiltin(MI->getDefinitionLoc()))
+        return;
 
-    c.ifndef(user, normalize_source_range(usee));
+      SourceRange defSR(MI->getDefinitionLoc(), MI->getDefinitionEndLoc());
+#if 0
+      if (!SourceLocation::isPairOfFileLocations(defSR.getBegin(), defSR.getEnd()))
+        return;
+#endif
 
-    if (debugMode)
-      llvm::errs() << "Ifndef " << user << " ---> " << usee << '\n';
+      clang_source_range_t usee(clang_source_range(defSR));
+      usee.beg -= get_backwards_offset_to_new_line(usee.getBegin());
+
+      {
+        clang_source_range_t user_src_rng;
+        user_src_rng.f = user.f;
+        user_src_rng.beg = user.pos;
+        user_src_rng.end = user.pos+1;
+
+        c.use(user_src_rng, usee);
+      }
+
+//    c.ifndef(user, normalize_source_range(usee));
+      at_end.ifndef.emplace_back(MI, user, usee, Name);
+
+      auto *const II = MacroNameTok.getIdentifierInfo();
+      if (debugMode)
+        llvm::errs() << "Ifndef " << user << " ---> " << usee << " (\"" << Name << "\")\n";
+    } else {
+      at_end.ifdef.emplace_back(MI, user, clang_source_range(SourceRange(Loc, Loc)), Name);
+
+      if (debugMode)
+        llvm::errs() << "Ifndef " << user << " (\"" << Name << "\")\n";
+    }
   }
 
   /// Hook called whenever an \#endif is seen.
   /// \param Loc the source location of the directive.
   /// \param IfLoc the source location of the \#if/\#ifdef/\#ifndef directive.
   void Endif(SourceLocation Loc, SourceLocation IfLoc) override {
-#if 0
     SourceRange SR(IfLoc, Loc);
-    clang_source_range_t src_rng(clang_source_range(SR));
-    src_rng.beg -= get_backwards_offset_to_new_line(src_rng.getBegin());
-    src_rng.end += get_forwards_offset_to_new_line(src_rng.getEnd());
-    c.code(src_rng);
-#endif
+
+    clang_source_range_t cl_src_rng(clang_source_range(SR));
+    cl_src_rng.beg -= get_backwards_offset_to_new_line(cl_src_rng.getBegin());
+
+//  c.endif(cl_src_rng);
+    at_end.endif.emplace_back(cl_src_rng);
   }
 };
 
@@ -592,11 +683,14 @@ static inline void block_signals(std::function<void(void)> f) {
 class CarbonCollectConsumer : public ASTConsumer {
   SourceManager &SM;
   CarbonCollectVisitor Visitor;
+  CarbonCollectPP *pPP = nullptr;
 
 public:
   CarbonCollectConsumer(CompilerInstance &CI)
       : SM(CI.getSourceManager()), Visitor(CI) {
-    CI.getPreprocessor().addPPCallbacks(std::make_unique<CarbonCollectPP>(CI));
+    auto upPP = std::make_unique<CarbonCollectPP>(CI);
+    pPP = upPP.get();
+    CI.getPreprocessor().addPPCallbacks(std::move(upPP));
   }
 
   clang_source_range_t sourceRangeOfTopLevelDecl(Decl *D) {
@@ -627,9 +721,8 @@ public:
 
         if (isa<NamedDecl>(D)) {
           NamedDecl *ND = cast<NamedDecl>(D);
-          if (ND->getName().empty()) {
-            // wtf?
-            return true;
+          if (ND->getName().empty() /* anonymous enum? */) {
+            ;
           } else {
             llvm::errs() << '\"' << ND->getName() << '\"';
           }
@@ -703,9 +796,6 @@ public:
         // FIXME recognize data-emitting directives whose operand is a bare symbol
       }
 
-      //
-      // traverse declaration's insides
-      //
       Visitor.TraverseDecl(*b);
     }
 
@@ -713,8 +803,111 @@ public:
   }
 
   void HandleTranslationUnit(ASTContext &Context) override {
-    c.finalize();
+    auto &PP = *pPP;
+    auto &at_end = PP.at_end;
 
+    auto &HeaderGuardNames = at_end.HeaderGuardNames;
+    unordered_set<const MacroInfo *> HeaderGuards;
+    unordered_set<clang_full_source_location_t,
+                  clang_full_source_location_hash_t>
+        HeaderGuardLocs;
+
+    for (auto &pair : at_end.definitions) {
+      const auto *MI = pair.first;
+      if (!MI->isUsedForHeaderGuard())
+        continue;
+
+      if (HeaderGuardNames.contains(pair.second)) {
+        HeaderGuards.emplace(MI);
+
+        if (debugMode)
+          llvm::errs() << "Header Guard " << pair.second << "\t[define]\n";
+
+        assert(MI);
+      }
+    }
+    for (const auto &tup : at_end.ifndef) {
+      const auto *MI = std::get<0>(tup);
+      const bool isGuard = (MI && MI->isUsedForHeaderGuard()) ||
+                           HeaderGuardNames.contains(std::get<3>(tup));
+
+      clang_full_source_location_t cl_src_loc = std::get<1>(tup);
+
+      if (isGuard) {
+        HeaderGuardLocs.emplace(cl_src_loc);
+        if (MI)
+          HeaderGuards.emplace(MI);
+      }
+    }
+    for (const auto &tup : at_end.ifdef) {
+      const auto *MI = std::get<0>(tup);
+      const bool isGuard = (MI && MI->isUsedForHeaderGuard()) ||
+                           HeaderGuardNames.contains(std::get<3>(tup));
+
+      clang_full_source_location_t cl_src_loc = std::get<1>(tup);
+
+      if (isGuard) {
+        HeaderGuardLocs.emplace(cl_src_loc);
+        if (MI)
+          HeaderGuards.emplace(MI);
+      }
+    }
+
+    if (debugMode)
+      llvm::errs() << "Found " << HeaderGuards.size() << " Header Guards.\n";
+
+    for (const auto &tup : at_end.ifndef) {
+      auto src_loc = std::get<1>(tup);
+      if (HeaderGuards.contains(std::get<0>(tup)) ||
+          HeaderGuardLocs.contains(src_loc)) {
+        if (debugMode)
+          llvm::errs() << "ignoring #ifndef (" << src_loc << "\t[ifndef]\n";
+        continue;
+      }
+      c.ifndef(std::get<1>(tup), std::get<2>(tup));
+    }
+    for (const auto &tup : at_end.ifdef) {
+      auto src_loc = std::get<1>(tup);
+      if (HeaderGuards.contains(std::get<0>(tup)) ||
+          HeaderGuardLocs.contains(src_loc)) {
+        if (debugMode)
+          llvm::errs() << "ignoring #ifdef (" << src_loc << "\t[ifdef]\n";
+        continue;
+      }
+      c.ifdef(std::get<1>(tup), std::get<2>(tup));
+    }
+    for (const auto &cl_src_rng : at_end.endif) {
+      auto src_loc = cl_src_rng.getBegin();
+      if (HeaderGuardLocs.contains(src_loc)) {
+        if (debugMode)
+          llvm::errs() << "ignoring #endif (" << src_loc << "\t[endif]\n";
+        continue;
+      }
+
+      c.endif(cl_src_rng);
+    }
+
+    for (Preprocessor::macro_iterator I = gl_PP->macro_begin(),
+                                      E = gl_PP->macro_end(); I != E; ++I) {
+      MacroDirective *MD = I->second.getLatest();
+      if (MD && MD->isDefined()) {
+        const IdentifierInfo *II = I->first;
+        if (!II)
+          continue;
+
+        const MacroInfo *MI = gl_PP->getMacroInfo(I->first);
+        if (!MI || MI->isBuiltinMacro())
+          continue;
+
+        SourceLocation Loc = MD->getLocation();
+        if (isInBuiltin(Loc))
+          continue;
+
+        c.defined_macro_name(II->getName());
+      }
+    }
+
+    c.finalize();
     block_signals([&] { c.write_carbon_output(); });
   }
 };

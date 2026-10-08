@@ -17,6 +17,9 @@
 #include <boost/serialization/unordered_map.hpp>
 #include <boost/serialization/set.hpp>
 #include <boost/icl/interval_map.hpp>
+#include <boost/unordered/unordered_flat_set.hpp>
+#include <boost/dynamic_bitset/dynamic_bitset.hpp>
+#include <boost/scope/defer.hpp>
 #define CARBON_BINARY
 #ifdef CARBON_BINARY
 #include <boost/archive/binary_oarchive.hpp>
@@ -32,7 +35,7 @@ using std::pair;
 
 namespace carbon {
 
-static const bool debugMode = false;
+static const bool debugMode = false; // FIXME environment variable?
 
 clang::SourceManager *gl_SM = nullptr;
 clang::Preprocessor *gl_PP = nullptr;
@@ -93,19 +96,23 @@ struct collector_priv {
   vector<unique_ptr<source_ranges_to_vertex_map_t>> f_usr_src_rng_vert_map;
   vector<unique_ptr<source_ranges_to_vertex_map_t>> f_sys_src_rng_vert_map;
 
-  list<pair<full_source_location_t, source_file_t>> inclusions;
+  vector<pair<full_source_location_t, source_file_t>> inclusions;
+
+  boost::unordered_flat_set<llvm::StringRef> all_macro_names;
 
   //
   // NOT to be serialized
   //
-  struct extra_uses_t {
+  struct extra_t {
     //
     // preprocessor
     //
     list<pair<full_source_location_t, source_range_t>> defined;
     list<pair<full_source_location_t, source_range_t>> ifndef;
     list<pair<full_source_location_t, source_range_t>> ifdef;
-  } extra_uses;
+    list<source_range_t> endif;
+//  unordered_set<full_source_location_t> hdrguards;
+  } extra;
 
   collector_priv() : depctx(res[boost::graph_bundle]) {}
 
@@ -137,6 +144,7 @@ struct collector_priv {
   string path_of_source_file(const source_file_t &);
 
   void code(const clang_source_range_t &);
+  template <bool OnlyIfAlreadyExists = false>
   void code(source_range_t &); /* only used by priv */
 
   void use(const clang_source_range_t &user_cl_src_rng,
@@ -159,6 +167,12 @@ struct collector_priv {
 
   void defined(const clang_full_source_location_t &user,
                const clang_source_range_t &usee);
+
+  void endif(const clang_source_range_t &);
+
+  void hdrguard(const clang_full_source_location_t &);
+  void hdrguard(llvm::StringRef);
+  void defined_macro_name(llvm::StringRef);
 
   void fixup_static_functions();
 
@@ -517,11 +531,12 @@ void collector_priv::code(const clang_source_range_t &cl_src_range) {
   this->code(src_rng);
 }
 
+template <bool OnlyIfAlreadyExists>
 void collector_priv::code(source_range_t &src_rng) {
   if (!src_rng)
     return;
 
-  auto do_code = [&](void) -> void {
+  {
   auto intervl = interval_of_source_range(src_rng);
 
   source_ranges_to_vertex_map_t &src_rng_to_vert_map =
@@ -535,15 +550,16 @@ void collector_priv::code(source_range_t &src_rng) {
     //
     // no overlapping source range
     //
+    if constexpr (OnlyIfAlreadyExists)
+      return;
+
     depends_vertex_t v = boost::add_vertex(res);
     res[v] = src_rng;
     depends_vertex_set_t v_container;
     v_container.insert(v);
 
     src_rng_to_vert_map.add(make_pair(intervl, v_container));
-
-    return;
-  }
+  } else {
 
   //
   // if an existing mapping contains this one, then we have nothing to do
@@ -552,9 +568,7 @@ void collector_priv::code(source_range_t &src_rng) {
     if (debugMode)
       llvm::errs() << path_of_source_file(src_rng.f) << ' '
                    << (*preexist_it).first << " ⊇ " << intervl << '\n';
-
-    return;
-  }
+  } else {
 
   // delete existing mapping(s), and insert new one
   list<pair<depends_vertex_t, DEPENDS_EDGE_TYPE>> in_verts;
@@ -590,10 +604,16 @@ void collector_priv::code(source_range_t &src_rng) {
 
     assert((*preexist_it).second.size() == 1);
     auto preexist_v = *(*preexist_it).second.begin();
+    assert((*preexist_it).first.lower() == res[preexist_v].beg);
+    assert((*preexist_it).first.upper() == res[preexist_v].end);
     preexist_verts.insert(preexist_v);
 
     for (const auto &include : res[preexist_v].includes)
+#if 0
       abs_includes.emplace((*preexist_it).first.lower() + include.first, include.second);
+#else
+      abs_includes.emplace(res[preexist_v].beg + include.first, include.second);
+#endif
 
     {
       depends_t::in_edge_iterator e_it, e_it_end;
@@ -678,16 +698,16 @@ void collector_priv::code(source_range_t &src_rng) {
 
   if (debugMode)
     llvm::errs() << "  " << intervl << '\n';
-  };
-
-  do_code();
+  }
+  }
+  }
 
   source_file_t f = src_rng.f;
   unsigned idx = index_of_source_file(f);
   unsigned N = is_system_source_file(f) ? this->depctx.syst_src_f_sizes.at(idx)
                                         : this->depctx.user_src_f_sizes.at(idx);
   dec_source_range(src_rng, N);
-  __attribute__((musttail)) return this->code(src_rng);
+  __attribute__((musttail)) return this->code<OnlyIfAlreadyExists>(src_rng);
 }
 
 static unordered_map<source_file_t, set<clang_full_source_location_t>> ifdefs;
@@ -742,101 +762,134 @@ void collector_priv::process_extra_uses(
 }
 
 void collector_priv::process_inclusions(void) {
-  for (auto &inclusion : inclusions) {
-  source_file_t include_f = inclusion.first.f;
-  source_file_t included_f = inclusion.second;
+  boost::dynamic_bitset<> done(inclusions.size());
+
+  bool Changed;
+  do {
+  Changed = false;
+  for (unsigned i = 0; i < inclusions.size(); ++i) {
+    if (done.test(i))
+      continue;
+
+  auto &inclusion = inclusions[i];
+  const source_file_t include_f = inclusion.first.f;
+  const source_file_t included_f = inclusion.second;
 
   struct {
     source_location_t pos;
   } include = {inclusion.first.pos};
 
-  if (debugMode)
-    llvm::errs() << llvm::formatv("#include of \"{0}\" from {1}:{2}\n",
-                 path_of_source_file(included_f),
-                 path_of_source_file(include_f),
-                 include.pos);
-
   source_ranges_to_vertex_map_t &src_rng_to_vert_map =
       source_range_vertex_map_of_source_file(include_f);
 
+  // what we need to determine is whether the included file is in the global
+  // scope. in other words, is there a preexisting source range which intersects
+  // with this #include?
   auto intervl = boost::icl::discrete_interval<source_location_t>::right_open(
       include.pos, include.pos + 1);
-  auto preexist_it = src_rng_to_vert_map.find(intervl);
-  if (preexist_it == src_rng_to_vert_map.end()) {
-    auto entire_it = src_rng_to_vert_map.find(location_entire_file_beg);
 
-    assert(entire_it != src_rng_to_vert_map.end());
-    assert((*entire_it).second.size() == 1);
-
-    auto entire_v = *(*entire_it).second.begin();
-    res[entire_v].includes.emplace(include.pos, included_f);
-
-    continue;
+  {
+    depends_vertex_t EntireVertex = entire_file_vertex(res, include_f);
+    res[EntireVertex].includes.emplace(include.pos /* abs is fine */, included_f);
   }
+
+  auto preexist_it = src_rng_to_vert_map.find(intervl);
+  if (preexist_it == src_rng_to_vert_map.end())
+    continue;
+  BOOST_SCOPE_DEFER[&] { done.set(i); };
 
   assert((*preexist_it).second.size() == 1);
-  assert(include.pos >= (*preexist_it).first.lower());
-
-  unsigned offset = include.pos - (*preexist_it).first.lower();
-
-  auto preexist_v = *(*preexist_it).second.begin();
-  res[preexist_v].includes.emplace(offset, included_f);
+  depends_vertex_t preexist_v = *(*preexist_it).second.begin();
+  auto intvl = (*preexist_it).first;
 
   //
-  // include uses everything in included
+  // yes, it's in a preexisting source range.
   //
-  depends_t::vertex_iterator vi, vi_end;
-  for (tie(vi, vi_end) = boost::vertices(res); vi != vi_end; ++vi) {
-    depends_vertex_t v = *vi;
-    if (res[v].f == included_f) {
-#if 0
-      llvm::errs() << llvm::formatv(
-          "wtf {0} {1} {2} {3}\n", boost::in_degree(v, res),
-          boost::out_degree(v, res), path_of_source_file(res[v].f), res[v].beg);
-#endif
+  if (debugMode)
+    llvm::errs() << llvm::formatv("#include of \"{0}\" from {1}:{2}\n",
+                                  path_of_source_file(included_f),
+                                  path_of_source_file(include_f), include.pos);
 
-      depends_t::out_edge_iterator e_it, e_it_end;
-      for (tie(e_it, e_it_end) = boost::out_edges(v, res);
-           e_it != e_it_end; ++e_it) {
-        depends_vertex_t v_ = boost::target(*e_it, res);
-#if 0
-        llvm::errs() << llvm::formatv("inclusion: needs {0} {1}\n",
-                                      path_of_source_file(res[v_].f),
-                                      res[v_].beg);
-#endif
-        depends_vertex_t needed_v = boost::target(*e_it, res);
-        if (preexist_v != needed_v)
-          boost::add_edge(preexist_v, needed_v, res);
-      }
-    }
+  assert(include.pos >= intvl.lower());
+  assert(intvl.lower() == res[preexist_v].beg);
+  assert(intvl.upper() == res[preexist_v].end);
+
+  {
+    unsigned offset = include.pos - res[preexist_v].beg; /* rel */
+    res[preexist_v].includes.emplace(offset, included_f);
   }
+
+    Changed = true;
   }
+  } while (Changed);
 }
 
 void collector_priv::ifdef(const clang_full_source_location_t &user,
                            const clang_source_range_t &usee) {
-  extra_uses.ifdef.emplace_back(full_source_location(user),
+  extra.ifdef.emplace_back(full_source_location(user),
                                 map_clang_source_range(usee));
 }
 
 void collector_priv::ifndef(const clang_full_source_location_t &user,
                             const clang_source_range_t &usee) {
-  extra_uses.ifndef.emplace_back(full_source_location(user),
+  extra.ifndef.emplace_back(full_source_location(user),
                                  map_clang_source_range(usee));
 }
 
 void collector_priv::defined(const clang_full_source_location_t &user,
                              const clang_source_range_t &usee) {
-  extra_uses.defined.emplace_back(full_source_location(user),
+  extra.defined.emplace_back(full_source_location(user),
                                   map_clang_source_range(usee));
 }
 
-void collector_priv::finalize(void) {
-  process_extra_uses("Defined",     extra_uses.defined);
-  process_extra_uses("MacroIfnDef", extra_uses.ifndef);
-  process_extra_uses("MacroIfDef",  extra_uses.ifdef);
+void collector_priv::endif(const clang_source_range_t &cl_src_rng) {
+  extra.endif.emplace_back(map_clang_source_range(cl_src_rng));
+}
 
-  process_inclusions(); /* do this at the very end! */
+void collector_priv::hdrguard(const clang_full_source_location_t &cl_src_loc) {
+//extra.hdrguards.insert(full_source_location(cl_src_loc));
+}
+
+void collector_priv::defined_macro_name(llvm::StringRef Name) {
+//extra.hdrguards.insert(full_source_location(cl_src_loc));
+  all_macro_names.insert(Name);
+}
+
+void collector_priv::finalize(void) {
+  for (llvm::StringRef Name : all_macro_names)
+    depctx.all_macro_names.emplace_back(Name.str());
+
+  process_extra_uses("Defined",     extra.defined);
+  process_extra_uses("MacroIfnDef", extra.ifndef);
+  process_extra_uses("MacroIfDef",  extra.ifdef);
+
+  process_inclusions(); /* this needs to happen *before* processing #endif's */
+
+  for (source_range_t &endif_src_rng : extra.endif) {
+    //
+    // does there exist an #include that falls within this #endif source range?
+    //
+    auto &src_rng_to_vert_map = source_range_vertex_map_of_source_file(endif_src_rng.f);
+
+    bool Exists = false;
+    for (auto &include : res[entire_file_vertex(res, endif_src_rng.f)].includes) {
+      if (include.first >= endif_src_rng.beg &&
+          include.first < endif_src_rng.end) {
+        Exists = true;
+
+        if (debugMode) {
+          cerr << "ignoring #endif in " << path_of_source_file(endif_src_rng.f)
+               << " because of #include\n";
+        }
+        break;
+      }
+    }
+
+    if (Exists)
+      continue;
+
+    this->code<true /* OnlyIfAlreadyExists */>(endif_src_rng);
+  }
 }
 
 static void vertex_interval_maps_of_graph(
@@ -1105,6 +1158,22 @@ void collector::ifndef(const clang_full_source_location_t &user,
 void collector::defined(const clang_full_source_location_t &user,
                         const clang_source_range_t &usee) {
   priv->defined(user, usee);
+}
+
+void collector::endif(const clang_source_range_t &cl_src_rng) {
+  priv->endif(cl_src_rng);
+}
+
+void collector::hdrguard(const clang_full_source_location_t &cl_src_loc) {
+  priv->hdrguard(cl_src_loc);
+}
+
+void collector::hdrguard(llvm::StringRef Name) {
+  priv->hdrguard(Name);
+}
+
+void collector::defined_macro_name(llvm::StringRef Name) {
+  priv->defined_macro_name(Name);
 }
 
 void collector::finalize(void) {

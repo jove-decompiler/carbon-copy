@@ -7,6 +7,7 @@
 #include <list>
 #include <set>
 #include <boost/filesystem.hpp>
+#include <boost/container_hash/hash.hpp>
 
 #include <clang/Basic/FileEntry.h>
 #include <clang/Basic/SourceLocation.h>
@@ -38,7 +39,11 @@ struct clang_full_source_location_t {
   clang_source_location_t pos;
 
   bool operator<(const clang_full_source_location_t &other) const {
-    return f < other.f || pos < other.pos;
+    return std::tie(f, pos) < std::tie(other.f, other.pos);
+  }
+
+  bool operator==(const clang_full_source_location_t &other) const {
+    return std::tie(f, pos) == std::tie(other.f, other.pos);
   }
 };
 
@@ -53,6 +58,14 @@ struct clang_source_range_t {
 
   clang_full_source_location_t getBegin(void) const { return {f, beg}; }
   clang_full_source_location_t getEnd(void)   const { return {f, end}; }
+};
+
+struct clang_full_source_location_hash_t {
+  std::size_t operator()(const clang_full_source_location_t &cl_src_loc) const noexcept {
+    return boost::hash<std::pair<unsigned, clang_source_location_t>>{}(
+        std::pair<unsigned, clang_source_location_t>(
+            cl_src_loc.f.getHashValue(), cl_src_loc.pos));
+  }
 };
 
 // defined in carbon_collect.cpp
@@ -107,6 +120,13 @@ public:
 
   void defined(const clang_full_source_location_t &user,
                const clang_source_range_t &usee);
+
+  void endif(const clang_source_range_t &);
+
+  void hdrguard(const clang_full_source_location_t &);
+  void hdrguard(llvm::StringRef);
+
+  void defined_macro_name(llvm::StringRef);
 
   void clang_source_file(const clang_source_file_t &);
   void clang_source_file(clang::FileEntryRef);

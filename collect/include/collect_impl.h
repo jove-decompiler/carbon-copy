@@ -2,6 +2,7 @@
 #include "fsuid.h"
 
 #include <string>
+#include <unordered_set>
 
 #include <boost/container/scoped_allocator.hpp>
 #include <boost/graph/adjacency_list.hpp>
@@ -114,6 +115,7 @@ struct depends_context_t {
    * headers */
   std::vector<std::string> toplvl_syst_src_f_paths;
 
+  std::vector<std::string> all_macro_names;
 
   struct {
     std::set<std::string> def, und;
@@ -134,6 +136,7 @@ struct depends_context_t {
        &user_src_f_sizes
        &syst_src_f_sizes
        &toplvl_syst_src_f_paths
+       &all_macro_names
        &macros.def
        &macros.und
        &include.dirs;
@@ -150,10 +153,10 @@ typedef boost::adjacency_list<
 typedef depends_t::vertex_descriptor depends_vertex_t;
 typedef depends_t::edge_descriptor depends_edge_t;
 
-static inline std::optional<depends_vertex_t>
+static inline depends_vertex_t
 entire_file_vertex(depends_t &g, source_file_t f) {
   depends_t::vertex_iterator vi, vi_end;
-  for (tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi) {
+  for (boost::tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi) {
     depends_vertex_t V = *vi;
 
     if (g[V].f != f)
@@ -166,7 +169,7 @@ entire_file_vertex(depends_t &g, source_file_t f) {
     return V;
   }
 
-  return std::nullopt;
+  abort();
 }
 
 //

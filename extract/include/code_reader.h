@@ -25,6 +25,8 @@ public:
   std::string source_text(code_t);
   std::string source_description(code_t);
   std::string debug_source_description(code_t);
+
+  const std::string &path_to_source_file(const source_file_t &);
 };
 
 }

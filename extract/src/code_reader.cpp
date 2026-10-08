@@ -115,6 +115,14 @@ bool code_reader::is_path_excluded(
   return false;
 }
 
+const std::string &code_reader::path_to_source_file(const source_file_t &f) {
+  auto &paths = is_system_source_file(f)
+                    ? g[boost::graph_bundle].syst_src_f_paths
+                    : g[boost::graph_bundle].user_src_f_paths;
+
+  return paths.at(index_of_source_file(f));
+}
+
 std::string code_reader::complete_source_text(const source_file_t &f) {
   auto &paths = is_system_source_file(f)
                     ? g[boost::graph_bundle].syst_src_f_paths

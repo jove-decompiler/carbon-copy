@@ -22,18 +22,20 @@ namespace po = boost::program_options;
 namespace fs = boost::filesystem;
 typedef boost::format fmt;
 
-static tuple<fs::path, collection_sources_t, code_location_list_t,
+static tuple<fs::path, fs::path, collection_sources_t, code_location_list_t,
              global_symbol_list_t, vector<fs::path>, int, bool, bool, bool,
-             bool, bool, bool, bool>
+             bool, bool, bool, bool, bool>
 parse_command_line_arguments(int argc, char **argv);
 
 int main(int argc, char **argv) {
   fs::path ofp;
+  fs::path clear_ofp;
   collection_sources_t clc_files;
   code_location_list_t desired_code_locs;
   global_symbol_list_t desired_glbs;
   vector<fs::path> exclude_dirs;
   int verb;
+  bool enable_linking;
   bool only_tys;
   bool notarget;
   bool graphviz;
@@ -45,9 +47,9 @@ int main(int argc, char **argv) {
   //
   // parse command line
   //
-  tie(ofp, clc_files, desired_code_locs, desired_glbs, exclude_dirs, verb,
-      only_tys, notarget, graphviz, syst_code, flatten, notfound_empty, debug) =
-      parse_command_line_arguments(argc, argv);
+  tie(ofp, clear_ofp, clc_files, desired_code_locs, desired_glbs, exclude_dirs,
+      verb, enable_linking, only_tys, notarget, graphviz, syst_code, flatten,
+      notfound_empty, debug) = parse_command_line_arguments(argc, argv);
 
   std::unique_ptr<ofstream> ofs;
 
@@ -61,11 +63,22 @@ int main(int argc, char **argv) {
     return *ofs;
   };
 
-  //
-  // take every collection for each source file, and merge (link) them together
-  //
   depends_t g;
-  link(g, clc_files);
+  if (enable_linking) {
+    //
+    // Take every collection for each source file, and merge (link) them
+    // together. Read the disclaimer in `extract --help`.
+    //
+    link(g, clc_files);
+  } else {
+    if (clc_files.second.size() != 1)
+      abort();
+
+    read_collection_file(g, *clc_files.second.begin());
+
+    cerr << "finished reading dependency graph (" << boost::num_vertices(g)
+         << " vertices, " << boost::num_edges(g) << " edges)." << endl;
+  }
   code_reader c_reader(g, exclude_dirs);
 
   //
@@ -155,8 +168,11 @@ int main(int argc, char **argv) {
     if (src.empty())
       continue;
 
+    // if we already have everything we need, the #include may be totally
+    // unnecessary, if it is a top-level #include. So, how do we determine if...
     auto flatten_includes =
         [&](auto &&self,
+            unsigned depth,
             std::string &contents,
             const auto &inclusions,
             std::vector<source_file_t> &active) -> void {
@@ -180,12 +196,10 @@ int main(int argc, char **argv) {
         if (is_system_source_file(included_f))
           continue;
 
-        if (pos >= contents.size())
-          continue;
-
-        size_t newlinePos = contents.find('\n', pos);
-        if (newlinePos == std::string::npos)
-          continue;
+        if (pos >= contents.size()) {
+          cerr << "wtf? " << pos << " ; ignoring\n";
+          abort();
+        }
 
         //
         // Prevent pathological recursive include loops.
@@ -193,31 +207,59 @@ int main(int argc, char **argv) {
         if (std::find(active.begin(), active.end(), included_f) != active.end())
           continue;
 
-        std::string included_contents = c_reader.complete_source_text(included_f);
+        const auto path_to_src = c_reader.path_to_source_file(included_f);
+
+        if (verb)
+          cerr << "expanding #include of \"" << path_to_src << "\"\n";
+
+        std::string included_contents =
+            c_reader.complete_source_text(included_f);
+        std::string included_contents_;
+
+        if (debug) {
+          std::stringstream ss;
+          ss << included_contents;
+          ss << '\n';
+          ss << "// " << path_to_src << "\n";
+          unsigned j = 1;
+          for (auto includer_f : active)
+            ss << "// " << std::string(j++, '\t')
+               << c_reader.path_to_source_file(includer_f) << "\n";
+          for (unsigned i = 0; i < depth; ++i) {
+            ss << std::string(80, '/') << '\n';
+          }
+          included_contents_ = ss.str();
+        }
+
+        if (included_contents_.empty())
+          included_contents_ = std::move(included_contents);
 
         //
         // If we know about the entire included file, recursively flatten
         // its includes before inserting it into the parent.
         //
-        if (auto v = entire_file_vertex(g, included_f)) {
-          active.push_back(included_f);
+        active.push_back(included_f);
 
-          self(self,
-               included_contents,
-               g[*v].includes,
-               active);
+        self(self,
+             depth+1,
+             included_contents_, /* everything */
+             g[entire_file_vertex(g, included_f)].includes,
+             active);
 
-          active.pop_back();
-        }
+        active.pop_back();
 
         //
         // Because we're working backwards through the source positions,
         // this replacement cannot invalidate any positions we haven't
         // processed yet.
         //
+        size_t newlinePos = contents.find('\n', pos);
+        unsigned replace_count = newlinePos == std::string::npos
+                                     ? contents.size() - pos
+                                     : newlinePos - pos + 1;
         contents.replace(pos,
-                         newlinePos - pos + 1,
-                         included_contents);
+                         replace_count,
+                         included_contents_);
       }
     };
 
@@ -228,12 +270,26 @@ int main(int argc, char **argv) {
 
       flatten_includes(
           flatten_includes,
+          1u,
           src,
           g[c].includes,
           active);
     }
 
     out() << src << endl << endl;
+  }
+
+  {
+    if (!clear_ofp.empty()) {
+        ofstream clear_ofs(clear_ofp.string());
+
+      ostream &clear_out = clear_ofp.empty() ? out() : clear_ofs;
+
+      auto &all_macro_names = g[boost::graph_bundle].all_macro_names;
+      std::ranges::sort(all_macro_names);
+      for (const auto &Name : all_macro_names)
+        clear_out << "#undef " << Name << '\n';
+    }
   }
 
   return 0;
@@ -266,9 +322,9 @@ static int line_number_to_offset(const fs::path& p, int lnno) {
   return (*it).second;
 }
 
-tuple<fs::path, collection_sources_t, code_location_list_t,
+tuple<fs::path, fs::path, collection_sources_t, code_location_list_t,
       global_symbol_list_t, vector<fs::path>, int, bool, bool, bool,
-      bool, bool, bool, bool>
+      bool, bool, bool, bool, bool>
 parse_command_line_arguments(int argc, char **argv) {
   fs::path root_src_dir;
   fs::path root_bin_dir;
@@ -278,10 +334,12 @@ parse_command_line_arguments(int argc, char **argv) {
   bool from_all;
 
   fs::path ofp;
+  fs::path clear_ofp;
   collection_sources_t cfl;
   code_location_list_t cll;
   global_symbol_list_t gsl;
   int verb;
+  bool enable_linking;
   bool only_tys;
   bool notarget;
   bool graphviz;
@@ -297,6 +355,9 @@ parse_command_line_arguments(int argc, char **argv) {
 
       ("out,o", po::value<fs::path>(&ofp),
        "specify output file path")
+
+      ("clear-inc", po::value<fs::path>(&clear_ofp),
+       "specify output file path of file to include that will #undef everything")
 
       ("src", po::value<fs::path>(&root_src_dir)->default_value(fs::current_path()),
        "specify root source directory where code exists")
@@ -335,6 +396,16 @@ parse_command_line_arguments(int argc, char **argv) {
       ("sys-code,s", "inline code from system header files")
 
       ("flatten", "expand #include's")
+
+      ("link,l",
+       "WARNING: as things stand, this option is experimental. In "
+       "general, for the extraction to be sound, it would not be possible to "
+       "copy the source code text verbatim. Furthermore, the implementation of "
+       "this option is still under active development. If one uses this option "
+       "they should be monitoring the code that is produced and, in general, not "
+       "rely on it always successfully compiling & running (in general). In "
+       "practice, the code this option has produced (for our use-cases) has "
+       "typically always compiled.")
     ;
 
     po::positional_options_description p;
@@ -352,6 +423,7 @@ parse_command_line_arguments(int argc, char **argv) {
       exit(0);
     }
 
+    enable_linking = vm.count("link") != 0;
     only_tys = vm.count("only-types") != 0;
     notarget = vm.count("no-target") != 0;
     graphviz = vm.count("graphviz") != 0;
@@ -396,6 +468,12 @@ parse_command_line_arguments(int argc, char **argv) {
       if (!fs::is_regular_file(abspath2)) {
         cerr << "no carbon collect data for '" << relpath << "'" << endl;
         exit(1);
+      }
+
+      if (!enable_linking && cfl.second.size() > 0) {
+        cerr << "Provided more than one source file but `--link` not passed! "
+                "Refusing to proceed.\n";
+        abort();
       }
 
       cfl.second.insert(fs::canonical(abspath2));
@@ -494,6 +572,14 @@ parse_command_line_arguments(int argc, char **argv) {
       }
       }
 
+      if (!enable_linking && cfl.second.size() > 1) {
+        cfl.second.erase(std::next(cfl.second.begin()), cfl.second.end());
+
+        cerr << "WARNING: multiple definitions for " << s
+             << " found: (arbitrarily) choosing \"" << *cfl.second.begin()
+             << '\"' << endl;
+      }
+
       continue;
     }
 
@@ -503,6 +589,9 @@ parse_command_line_arguments(int argc, char **argv) {
       exit(1);
     }
 
+    //
+    // we have a relative path to a source file.
+    //
     string relpath = s.substr(0, colpos);
 
     fs::path abspath1 = fs::canonical(root_src_dir / relpath);
@@ -517,6 +606,12 @@ parse_command_line_arguments(int argc, char **argv) {
       exit(1);
     }
     cfl.second.insert(fs::canonical(abspath2));
+    if (!enable_linking && cfl.second.size() > 1) {
+      cerr << "Provided more than one source file but `--link` not passed! "
+              "Refusing to proceed.\n";
+      abort();
+    }
+
     string rest = s.substr(colpos + 1, s.size() - (colpos + 1) - 1);
     int off;
     if (s[s.size()-1] == 'l') {
@@ -528,6 +623,7 @@ parse_command_line_arguments(int argc, char **argv) {
     cll.push_back(make_pair(abspath1.string(), off));
   }
 
-  return make_tuple(ofp, cfl, cll, gsl, exclude_dirs, verb, only_tys, notarget,
-                    graphviz, syst_code, flatten, notfound_empty, debug);
+  return make_tuple(ofp, clear_ofp, cfl, cll, gsl, exclude_dirs, verb, enable_linking,
+                    only_tys, notarget, graphviz, syst_code, flatten,
+                    notfound_empty, debug); /* FIXME (style) */
 }
